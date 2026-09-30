@@ -7,7 +7,7 @@ Order changed from the brief: the phone app is M2 and the car link is M3 (DECISI
 | # | Milestone | Main risk it retires |
 | --- | --- | --- |
 | M1 | Server core, simulator, tag registry, road-network layout, dashboard live map ([M1.md](M1.md)) | architecture and protocols, in simulation |
-| M2 | Android marker sensor app v1 ([draft](M2.md)): Camera2, C++ ROI tracking, wired/wireless modes, sustained performance | pose age, blur at short exposure, lighting, phone timestamps, heat over hours |
+| M2 | Android marker sensor app v1 ([M2.md](M2.md)): Camera2, C++ ROI tracking, wired/wireless modes, sustained performance | pose age, blur at short exposure, lighting, phone timestamps, heat over hours |
 | M3 | Car link manager, both firmwares, one-click connect, manual drive, E-stop, TTL | Bluetooth reliability, Uno/HC-05, brownouts |
 | M4 | Venue setup wizard, lens, per-car motion calibration, loop-latency step test | the numbers the controller depends on |
 | M5 | Single-car motion on the road network | gyro-less control |
@@ -15,7 +15,8 @@ Order changed from the brief: the phone app is M2 and the car link is M3 (DECISI
 | M7 | Missions, "why?" from the event log, Groq explainer/auditor, timeline | explainability |
 | M8 | Hardening | security, recovery, docs |
 
-## M2 — Android marker sensor app v1 (Sonnet, high effort) — draft plan: [M2.md](M2.md)
+## M2 — Android marker sensor app v1 (Sonnet, high effort) — plan: [M2.md](M2.md)
+- **Starts with** the M1 review fixes F1–F14 (`M1.md`, "Opus review").
 - **App:** Camera2 directly with one YUV `ImageReader` at the sensor's maximum fps, manual short exposure/ISO,
   locked focus/AWB, capabilities reported (D30); C++ detection with one JNI call per frame and no per-frame
   allocation (D31); ROI tracking with periodic full scans on the fastest cores (D32); connection modes WIRED
@@ -37,7 +38,10 @@ Order changed from the brief: the phone app is M2 and the car link is M3 (DECISI
   priority, identity check (`?` → `ID` name/proto), ping/RTT, degraded/reconnect with backoff, parallel
   one-click connect with per-car progress, manual drive (hold-to-drive, `M` refreshed every `refresh_ms`,
   released → `S`), per-car stop, E-stop sends `S` to every car and blocks `M`; `BOOT`/`X`/`E` events;
-  `stopped_reason` becomes real. New `[car_link]` section in `tuning.toml`. The simulator's `ScriptDriver` is
+  `stopped_reason` becomes real, computed by **one** pure function (`safety.stop_reason`) used by both the
+  controller's gate and the dashboard, in the PROTOCOL.md §6.2 order, with a table-driven test (M1 review).
+  Watch the event-loop lag (`/api/health` `loop_lag_ms`, from M2): the `M` refresh must never miss `refresh_ms`;
+  if a floor refit (D37) stalls the loop too long, move it to a worker thread. New `[car_link]` section in `tuning.toml`. The simulator's `ScriptDriver` is
   removed: the server drives the sim cars over TCP.
 - **Hardware test:** one-click connect both cars; manual drive; kill the server mid-drive → both cars stop within
   TTL (film at 60 fps, count frames); power-cycle each car → auto-reconnect and `BOOT` reason logged; 10 minutes of
@@ -48,7 +52,12 @@ Order changed from the brief: the phone app is M2 and the car link is M3 (DECISI
   measure → validate → camera exposure check → save venue preset; loading a preset re-checks it. Target: a
   3 × 3 layout set up in under 5 minutes.
 - **Lens:** use Camera2 intrinsics/distortion from `hello` when present, else a ChArUco profile tool (port
-  DUO-WARE 1 `vision/lens.py`); corners corrected before the floor fit.
+  DUO-WARE 1 `vision/lens.py`); corners corrected before the floor fit. With a camera model, compute the true
+  nadir and camera height (M1 P10; today the image centre mapped to the floor, up to ~3.5 mm car-pose error).
+- **Persist automatically located floor-tag positions** in `state.db`, keyed by the floor-tag signature, so a
+  restart can refit from any visible placed tags instead of needing the origin tag (M1 review).
+- Dashboard: the Live page fits 800 px without horizontal scrolling; map bounds from nodes and cars, not the whole
+  camera footprint (M1 known gap).
 - **Per-car motion calibration** (camera-driven, stored per car in `state.db`): minimum PWM and kick per wheel
   direction, trim for straight driving, turn rate vs PWM, coast distance and coast angle after `S`, tag offset
   from the rotation centre (spin in place → circle fit) and heading offset (short straight drive).

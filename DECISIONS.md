@@ -33,6 +33,11 @@ when a camera is `UNSYNCED`. Replying from the frames socket needs no extra port
 Lowest-RTT filtering removes queueing delay.
 **Rejected.** Trusting the phone's wall clock (NTP on phones is coarse and can jump). Phone-initiated sync
 (the server would have to trust the phone's estimate). PTP (not available on Android without root).
+**Amended (M1 review).** The drift slope is used only when the chosen samples span at least
+`clock_sync.slope_min_span_fraction` (0.25) of the window; otherwise the offset is their mean. Measured in M1
+(simulated 0–3 ms one-way jitter, 20 samples over 2 s): line fit mean error 0.37 ms, worst 2.1 ms; mean only
+0.17 ms, worst 0.6 ms. With a sample every 0.5 s the extrapolation is short, so a 30 ppm drift costs only
+microseconds; the slope matters only when averaging over most of the 60 s window.
 
 ### D4 — The camera's own timestamp clock, detected at run time
 **Decision.** The phone's sync clock is whatever clock the sensor timestamps use (`boottime` or
@@ -50,6 +55,16 @@ out of only one interface, so a plain limited broadcast can miss the tether. In 
 there is no broadcast path, so the phone probes `127.0.0.1` through `adb reverse` instead (D33).
 **Rejected.** mDNS/NSD: needs an extra responder on Windows and is often blocked by the firewall;
 typing an IP.
+**Amended (M1 review).** M1 assumed every interface is a /24 because the standard library cannot read a
+netmask on Windows. That holds for USB tethering, phone and Windows hotspots, but not for many venue and campus
+networks (/23 to /16), and a wrong broadcast address fails silently. The server now reads each interface's real
+netmask with `psutil.net_if_addrs()` (one small, widely used dependency; it also gives interface names for the
+logs) and sends each beacon twice from a socket bound to the interface: to the directed broadcast and to
+`255.255.255.255`. A Wi-Fi-client phone that hears no beacon probes its gateway's `/api/beacon` (covers a
+laptop hotspot, where the laptop is the gateway). Venue Wi-Fi with client isolation defeats every discovery
+method and also the frames themselves; the answer there is WIRED or a hotspot (PROTOCOL.md §4.1).
+Rejected: parsing `ipconfig` (localised output), `GetAdaptersAddresses` through ctypes (≈100 lines to do
+what psutil does).
 
 ### D6 — Pairing code → token; UDP accepted only from a live session's IP with its `sid`
 **Decision.** First connection: the phone enters the pairing code shown on the dashboard and receives a
@@ -271,6 +286,8 @@ camera sees and marks moved nodes. Built-in presets live in `config/venue_preset
 gives 9 well-spread fixed tags. Cars cover node tags while driving, so calibration must work from any
 subset, which the RANSAC fit already does. The venue wizard must be fast at an event (brief 4.6).
 **Rejected.** Anchors only (extra tags to print and place); trusting a preset without re-checking it.
+**Refined by D37 and D38 (M1 review):** metric refinement after every homography fit, per-tag steady buffers,
+and a stricter "one tag moved" rule.
 
 ### D29 — Traffic rules on the road network (outline; details in M6)
 **Decision.** A* over the 4-connected node graph with a Manhattan heuristic in (row, col) and edge costs
@@ -380,3 +397,81 @@ but the server gives no poses for control, so the cars stop. Benchmark results (
 per camera and shown on the dashboard.
 **Why.** A benchmark changes resolution, fps and pipeline every few seconds; driving on those poses would be
 unsafe and would pollute the controller's learning.
+
+---
+
+Entries D37–D42: M1 review, 2026-10-01.
+
+### D37 — Metric refinement of the floor fit from the known tag shape
+**Decision.** After every successful homography fit with status `OK`, the mapping (8 parameters) and the pose of
+every automatically located floor tag are adjusted together (Levenberg-Marquardt, numpy only,
+`localization/refine.py`) so that each tag's image is a square of its printed size at its pose. The origin and
+typed-in tags stay fixed. A refinement that would move a tag more than 150 mm is discarded (a failed fit, not a
+refinement). Tags whose measured size disagrees with their printed size (`size_warn`) are left out of it,
+because they break the assumption it rests on.
+**Why.** Auto-location through the first similarity fit carries the phone's tilt into every located position
+(a 2° tilt is about 2 % scale across 1 m), and a homography fitted to those positions reproduces the error.
+Measured in M1 (simulation only): node errors up to 29.9 mm before, 1.9–2.2 mm after. It keeps D13: nothing is
+measured by hand; the tags' printed size is the only scale.
+**Cost.** About 63 ms per fit with 9 tags on the development laptop (M1 review measurement), on the event loop.
+Fits happen while the camera is not usable for control (initial, requested, after `MISALIGNED`, WEAK → OK),
+so cars are already stopped; from M3 the event-loop lag is monitored, and if a larger layout makes it too slow
+the refinement moves to a worker thread.
+**Rejected.** Hand-measured anchor positions (D13); a full camera model (intrinsics + pose) in M1: planned for
+M4 with the lens profile, and it will also give the true nadir (M1 uses the image centre mapped to the floor,
+which costs up to ~3.5 mm on an 80 mm-high car tag with the simulated tilt).
+
+### D38 — Fit from whichever floor tags are steady; a tag "moved" only when one tag disagrees
+**Decision.** Each floor tag keeps its own steady-frame buffer (cleared only when that tag's corners move or the
+camera turns `MISALIGNED`), and a fit uses the visible tags whose buffers are full. A tag hidden by a car keeps
+its location progress. During the locked-fit check a tag is un-placed as "moved" only when **exactly one**
+automatically located tag is out of tolerance and **at least three** other placed tags agree with the fit;
+any other disagreement makes the camera `MISALIGNED` (cars stop) and it refits after `drift_frames`. In a new
+fit, RANSAC-rejected tags are un-placed only when the inliers are at least three tags and more than half of the
+tags fitted; otherwise the fit is refused.
+**Why.** DUO-WARE 1 restarted averaging whenever the visible set changed, so with two cars driving over the
+nodes a fit never completed (M1: 19 s to `OK`, 7 of 9 tags). The M1 implementation un-placed up to half the
+tags as "moved"; a small rotation of the phone moves far tags more than near ones, so half the tags could
+exceed the tolerance while the camera stayed `OK` and the map was silently rebuilt around a wrong fit. A single
+disagreeing tag among several agreeing ones is the only case where "the tag moved" is clearly the better
+explanation.
+**Rejected.** A fixed set of tags that must stay visible together; treating up to half the tags as moved.
+
+### D39 — `WEAK` calibration is never used for control or the layout
+**Decision.** A camera fitted from a single floor tag (`WEAK`) maps tags and cars for display and locates
+other floor tags (which then upgrade it to `OK`), but its poses have `usable_for_control: false`
+(`stopped_reason` `uncalibrated`), and node-moved detection, `measure` and preset checks ignore it.
+**Why.** A similarity from one 90 mm tag extrapolates badly: in the M1 manual check positions far from the
+tag were about 30 mm off, which produced a false "node moved" event (M1 P9). The same error would steer a car.
+It only lasts until a second floor tag is located (seconds).
+
+### D40 — Tests do not depend on the Windows timer resolution
+**Decision.** The end-to-end test runs at the default Windows timer resolution; `python -m duoware.sim` still
+asks for 1 ms (`timeBeginPeriod`, released at exit) so a manual simulation streams smoothly. Every timing
+criterion compares the server's measurement with the simulator's truth recorded at the instant things really
+happened, so coarse sleeps change the numbers but not the verdict.
+**Why.** Checked in the M1 review: without the 1 ms timer the test passed (17 s) with pose age 70 ms instead of
+60 ms, and the server matched the truth as closely as before (A2(e) 0.8 ms, A14 0.7 ms). A test that passes only
+with a process-wide timer tweak would hide a real dependency.
+
+### D41 — The camera's own image processing that moves or warps pixels is off
+**Decision.** While tracking, the app turns off optical image stabilisation (`LENS_OPTICAL_STABILIZATION_MODE_OFF`),
+video stabilisation (`CONTROL_VIDEO_STABILIZATION_MODE_OFF`) and distortion correction
+(`DISTORTION_CORRECTION_MODE_OFF`) where the device supports the keys, locks focus by setting `AF_MODE_OFF` with
+the focus distance the one-time autofocus found, and uses the `FAST` noise-reduction and edge modes. What it
+could not turn off is reported in `status` (M2 plan).
+**Why.** The floor fit assumes that a fixed floor point always lands on the same pixel. OIS and stabilisation
+shift the image by pixels without the phone moving, which looks like drift (or a moved tag) to the fit;
+distortion correction changes the geometry that `hello.camera.distortion` describes (PROTOCOL.md §2 sends raw
+corners). An autofocus that keeps hunting changes the scale slightly. `FAST` modes never lower the frame rate.
+**Rejected.** Leaving device defaults (they differ between phones and some enable OIS for all streams).
+
+### D42 — Frame recordings for offline diagnosis
+**Decision.** `python -m duoware --record-frames` writes every accepted frame of every camera, with the
+server's receive time and clock-sync offset, to `data/recordings/<start wall time>.jsonl` from a background
+writer thread. Offline tools read these files (M2: the blur report; later: replaying a hardware run through the
+localization code).
+**Why.** Hardware results must be measured, and questions like "why did car B stop at 14:02:31" or "how many
+clean reads at 300 px/s" need the raw observations, not only statistics. JSONL of the wire messages is simple and
+replayable. Off by default: an hour at 60 fps is about 200 MB.
+**Rejected.** Always recording (disk growth); recording video (not on the tracking path, D1).

@@ -116,12 +116,13 @@ and logged at most once per minute per cause.
 
 | Condition | Action | Counter |
 | --- | --- | --- |
-| Not JSON, missing field, wrong type | drop the message | `rx_bad` |
+| Not JSON, missing field, wrong type, `w` or `h` ≤ 0 | drop the message | `rx_bad` |
 | `v` ≠ 1 | drop; camera shows "protocol mismatch" | `rx_version` |
 | `sid` not a live session, or source IP ≠ that session's WebSocket peer IP | drop | `rx_unauth` |
 | `seq` ≤ last accepted `seq` of the session | drop (late or duplicate) | `rx_late` |
 | `seq` jumps by *k* > 1 | accept; `dropped += k − 1` | `dropped` |
 | Marker ID outside the dictionary, or a corner non-finite or outside [−w, 2w] × [−h, 2h] | ignore that marker only | `rx_bad_marker` |
+| The same marker ID more than once in one frame (a duplicate print, or a false detection) | ignore **every** entry with that ID in this frame: its pose would be ambiguous | `rx_bad_marker` (one per entry) |
 | Camera `UNSYNCED` (§3.3), or the phone's `app_mode` ≠ `tracking` (§4.5) | accept for statistics; produce **no** poses for control | — |
 | Computed pose age > `tuning.pose.stale_ms` | accept for statistics; the pose is stale (cars stop) | — |
 
@@ -185,10 +186,13 @@ session, then every `interval_ms` (500 ms).
   in the last 2 s.
 - Keep accepted samples for `window_s`. Fit `θ(t) = a + b·(t − t_ref)` by least squares over the
   `best_fraction` of samples with the lowest `rtt` (at least 4; with fewer, use the lowest-`rtt`
-  sample and `b = 0`).
+  sample and `b = 0`). The slope `b` is used only when the chosen samples span at least
+  `clock_sync.slope_min_span_fraction` × `window_s`; otherwise `b = 0` and `a` is their mean (over a
+  short span the per-sample path asymmetry outweighs the crystal drift, DECISIONS.md D3).
 - `server_time = phone_time − θ(now)`. Pose age = `now − server_time(marker capture time)`.
 - The camera is **`SYNCED`** while an accepted sample is younger than `unsynced_after_s`, otherwise
-  **`UNSYNCED`**. Reported as `sync.ok`, `sync.rtt_ms` (lowest in the window) and `sync.samples`.
+  **`UNSYNCED`**. Reported as `sync.ok`, `sync.rtt_ms` (lowest in the window), `sync.samples` and (from
+  M2) `sync.rejected` (replies discarded by the rules above during the last `window_s`).
 - Every new session starts `UNSYNCED` with an empty estimator (DECISIONS.md D35).
 
 ---
@@ -203,15 +207,25 @@ only the frames transport and the discovery differ (DECISIONS.md D33).
 | --- | --- | --- | --- |
 | `wired_tether` | USB tethering: the phone shares a network over the USB cable (and charges) | UDP (§2) | beacon (§4.2) received on the tether interface (`rndis*`, `usb*`, `ncm*`) |
 | `wired_adb` | USB cable with `adb reverse` mapping the phone's `127.0.0.1:<http_port>` and `127.0.0.1:<frames_tcp_port>` to the laptop | TCP (§2.1) | probe `GET http://127.0.0.1:<http_port>/api/beacon` |
-| `wireless` | Wi-Fi: same router, laptop hotspot or phone hotspot (2.4 or 5 GHz) | UDP (§2) | beacon received on the Wi-Fi interface (`wlan*`, `ap*`, `swlan*`, `softap*`) |
+| `wireless` | Wi-Fi: same router, laptop hotspot or phone hotspot (2.4 or 5 GHz) | UDP (§2) | beacon received on the Wi-Fi interface (`wlan*`, `ap*`, `swlan*`, `softap*`); if none arrives within 3 s and the phone is a Wi-Fi client, probe the Wi-Fi gateway: `GET http://<gateway>:<http_port>/api/beacon` (a laptop hotspot is the gateway) |
 
 - **WIRED** tries `wired_tether` first (listen for a beacon for 3 s), then `wired_adb` (probe), and repeats
-  every 5 s until one works. **WIRELESS** uses `wireless` only.
+  every 5 s until one works. **WIRELESS** uses `wireless` only (beacon 3 s, then the gateway probe), and
+  repeats every 5 s. Before any server was found, `<http_port>` is the app's configured port (default 8000).
+  A manually entered host is the last fallback in every mode.
+- `wireless` has two cases. **Phone is a Wi-Fi client** (router or laptop hotspot): the phone uses the Wi-Fi
+  `Network` from `ConnectivityManager` and binds its sockets to it. **Phone is the hotspot**: its AP interface
+  (`ap*`, `swlan*`, `softap*`) is a tethering interface like USB tethering and is handled the same way (bind to
+  that interface's address).
 - The phone accepts only beacons whose `host` is on the subnet of the chosen interface, and binds its
-  sockets to that interface or network (Wi-Fi: the Wi-Fi `Network`; tether: the tether interface address;
-  adb: loopback), so traffic never leaks onto another path (for example mobile data).
+  sockets to that interface or network (Wi-Fi: the Wi-Fi `Network`; tether or phone hotspot: the interface
+  address; adb: loopback), so traffic never leaks onto another path (for example mobile data).
 - In `wireless` mode the app holds a low-latency Wi-Fi lock (`WIFI_MODE_FULL_LOW_LATENCY`) to keep Wi-Fi
-  power saving from adding jitter.
+  power saving from adding jitter (Android honours it only while the app is in the foreground with the
+  screen on, which the demo screen guarantees), and a `WifiManager.MulticastLock` while it listens for
+  beacons (many Wi-Fi drivers drop broadcasts without it); the multicast lock is released once connected.
+- Venue Wi-Fi often isolates clients from each other (no broadcast, often no unicast between clients):
+  use WIRED, a laptop hotspot or the phone's hotspot there.
 - **Server:** listens on all interfaces: HTTP/WebSocket on `http.host` (0.0.0.0), UDP frames on
   `udp.frames_port`, TCP frames on `tcp.frames_port`. With `wired.adb_reverse = true` it runs
   `adb reverse` for every attached device every `wired.adb_poll_s` (idempotent; a missing `adb` is logged once).
@@ -222,10 +236,14 @@ only the frames transport and the discovery differ (DECISIONS.md D33).
   re-checked against the visible floor tags as usual).
 
 ### 4.2 Discovery beacon (server → broadcast, UDP)
-Sent every `udp.beacon_interval_s` to port `udp.beacon_port` on the **directed broadcast address of
-every active IPv4 interface** (Windows sends `255.255.255.255` out of one interface only), with
-`host` set to that interface's own address. `GET /api/beacon` returns the same message, with `host`
-set to the address the request arrived on (used by `wired_adb`).
+Sent every `udp.beacon_interval_s` to port `udp.beacon_port`, for **every active IPv4 interface** (up,
+not loopback, not link-local 169.254/16), from a socket bound to that interface's address, twice: to the
+interface's **directed broadcast address** computed from its own address and its **real netmask** (never
+assumed), and to the limited broadcast `255.255.255.255` (an unbound socket on Windows sends that out of
+one interface only; a bound one uses the bound interface). `host` is that interface's own address.
+Interfaces with a /31 or /32 mask get only the limited broadcast. The phone de-duplicates by `server_id`.
+`GET /api/beacon` returns the same message, with `host` set to the address the request arrived on (used
+by `wired_adb` and the Wi-Fi gateway probe).
 
 ```json
 {"v":1,"t":"beacon","server_id":"a3f9c2d17e804b55","name":"DUO-WARE","host":"192.168.42.129","http_port":8000,"frames_port":47801,"frames_tcp_port":47802}
@@ -309,7 +327,8 @@ Values come from `config/tuning.toml` `[camera]`, `[phone]`, `[phone.thermal]`, 
 ```json
 {"v":1,"t":"settings","resolution":[1280,720],"fps":0,"exposure_ns":3000000,"iso":800,
  "focus":"locked","awb":"locked",
- "tracking":{"track_ids":[1,5],"full_scan_every":10,"roi_margin":1.5,"roi_min_px":64,"threads":0},
+ "tracking":{"track_ids":[1,5],"full_scan_every":10,"roi_margin":1.5,"roi_min_px":64,"threads":0,
+             "demote_after_scans":3,"corner_refine":"subpix","aruco3":false},
  "thermal":{"forecast_s":10,"headroom_down":0.85,"headroom_up":0.65,"up_after_s":60,"status_down":2,
             "fps_steps":[1.0,0.75,0.5],"resolution_steps":[[960,540]]},
  "preview":{"fps":3,"width":480,"quality":60}}
@@ -325,6 +344,9 @@ Values come from `config/tuning.toml` `[camera]`, `[phone]`, `[phone.thermal]`, 
 | `tracking.full_scan_every` | a full-frame scan at least every N frames, and on the next frame whenever a tracked tag is not found in its window |
 | `tracking.roi_margin`, `roi_min_px` | window = the tag's predicted bounding box grown on every side by `roi_margin` × its side length; at least `roi_min_px` square; clipped to the image |
 | `tracking.threads` | detection worker threads; `0` = number of cores in the fastest cluster |
+| `tracking.demote_after_scans` | (from M2) a tag the phone started tracking because it moved (not in `track_ids`) is dropped again after this many consecutive full scans in which it moved less than its own side length |
+| `tracking.corner_refine` | (from M2) ArUco corner refinement: `"subpix"` or `"none"` |
+| `tracking.aruco3` | (from M2) OpenCV's faster "ArUco 3" detection mode on full scans (`useAruco3Detection`); a benchmark decides the default |
 | `thermal.*` | thermal ladder (DECISIONS.md D34): level *k* < `len(fps_steps)` runs at `fps_steps[k]` × the base fps; higher levels step through `resolution_steps` (same aspect ratio as `resolution`) at the lowest fps step. Step **down** one level when `getThermalHeadroom(forecast_s)` ≥ `headroom_down` or thermal status ≥ `status_down`; step **up** one level after `up_after_s` with headroom < `headroom_up` and status < `status_down`. |
 | `preview` | dashboard preview: `fps` (0 = off), JPEG `width` and `quality` |
 
@@ -363,6 +385,8 @@ The phone applies the settings as closely as the camera allows and reports what 
 | `cpu` | `app_pct`: the app's CPU time ÷ wall time ÷ cores × 100; `max_cur_khz`: current frequency of the fastest core |
 | `thermal` | `status`: `PowerManager.getCurrentThermalStatus()` 0 (none) … 6 (shutdown); `headroom`: `getThermalHeadroom(forecast_s)` (API 30+); `level`: thermal ladder level (§4.4); `reason`: why the level is above 0 |
 | `perf` | which Android performance features are active (DECISIONS.md D34) |
+| `processing_on` | (from M2) image processing the app asked to turn off but the device keeps on or does not let it control (DECISIONS.md D41): a list from `ois`, `video_stabilization`, `distortion_correction`, `af` (focus could not be locked); `[]` when everything is off |
+| `markers_seen` | markers in the latest `full` frame |
 
 Any value the phone cannot measure is `null`, never estimated. A status older than 5 s is shown as
 "status stale"; it does not stop cars by itself (frames and sync do). The server logs a `camera` event
@@ -390,14 +414,16 @@ full-scan interval, `duration_s` each, while tags are in view. During the run `s
 ```json
 {"v":1,"t":"bench","cam":1,"run_id":"20261001-140200",
  "results":[{"resolution":[1280,720],"fps_target":0,"pipeline":"native_roi","full_scan_every":10,
-             "duration_s":30,"fps":59.6,"cap_to_sent_ms":{"p50":33.1,"p95":40.2},
+             "aruco3":false,"duration_s":30,"fps":59.6,"cap_to_sent_ms":{"p50":33.1,"p95":40.2},
              "detect_full_ms":{"p50":14.0,"p95":17.5},"detect_roi_ms":{"p50":1.8,"p95":2.6},
              "cpu_app_pct":22.0,"headroom_start":0.40,"headroom_end":0.47,"markers_seen":11}]}
 ```
 
 `pipeline` ∈ `native_roi` (the default), `native_full` (full scan every frame), `java_full` (the
-OpenCV Java API on full frames: the JNI-overhead baseline, DECISIONS.md D31). The server stores runs per
-camera (`GET /api/cameras/{cam}/benchmarks`).
+OpenCV Java API on full frames: the JNI-overhead baseline, DECISIONS.md D31). `aruco3` (from M2) is the
+`tracking.aruco3` value used. `fps` is the achieved rate; `markers_seen` the mean markers per full frame.
+A result the phone could not measure has `null` there. The server stores runs per camera
+(`GET /api/cameras/{cam}/benchmarks`).
 
 ---
 
@@ -487,15 +513,16 @@ skipped for that client, never queued.
                 "detect_roi":{"p50":1.9,"p95":2.8},"send":{"p50":0.3,"p95":0.6},
                 "cap_to_sent":{"p50":33.5,"p95":41.0}},
    "pose_age_ms":{"p50":38.2,"p95":47.0,"max":65.4,"n":597},
-   "dropped":3,"rx_bad":0,"rx_unauth":0,"rx_late":0,
+   "dropped":3,"rx_bad":0,"rx_unauth":0,"rx_late":0,"rx_version":0,"rx_bad_marker":0,
    "cpu_app_pct":23.5,"thermal":{"status":0,"headroom":0.42,"level":0,"reason":null},
-   "exposure_ms":3.0,"iso":800,"preview_seq":57,"status_age_ms":420}],
+   "exposure_ms":3.0,"iso":800,"preview_seq":57,"status_age_ms":420,"clock":"boottime"}],
  "tags":[{"id":10,"role":"anchor","label":null,"seen":true,"cams":[1],
           "x_mm":0.0,"y_mm":0.0,"heading_deg":-90.0,"age_ms":61,
           "size_mm":90.3,"size_warn":false,"placed":true}],
  "cars":[{"name":"DUO-A","tag":1,"color":"#e4572e",
           "link":{"state":"disconnected","rtt_ms":null,"fw":null},
-          "pose":{"x_mm":3.2,"y_mm":-1.7,"heading_deg":7.4,"age_ms":64,"fresh":true,"at_node":10},
+          "pose":{"x_mm":3.2,"y_mm":-1.7,"heading_deg":7.4,"age_ms":64,"fresh":true,"at_node":10,
+                  "usable_for_control":true},
           "motion":null,"stopped_reason":"no_link","battery":"not_measured"}]}
 ```
 
@@ -506,14 +533,19 @@ skipped for that client, never queued.
 | `cameras[].online` | a phone session is live |
 | `cameras[].app_mode` | from the phone's `status` (§4.5); only `tracking` gives poses for control |
 | `cameras[].link` | connection mode (§4.1), `transport` (`udp` or `tcp`), interface and Wi-Fi details from the phone, and what the **server measures** over `link.stats_window_s`: `latency_ms` = one-way transit `receive time − server_time(sent_ns)` (p50/p95); `jitter_ms` = RFC 3550 interarrival jitter of that transit (`J += (\|D\| − J) / 16`); `loss_pct` = missing `seq` ÷ (received + missing) × 100, which includes frames the phone dropped itself (their count is `send_dropped`, from the phone) |
-| `cameras[].calib.status` | `UNCALIBRATED`, `WEAK` (1 floor tag), `OK`, `MISALIGNED` |
+| `cameras[].calib.status` | `UNCALIBRATED`, `WEAK` (fitted from 1 floor tag: good near it, tens of mm off far from it; used to locate other floor tags and for display, **never for control or layout**, DECISIONS.md D39), `OK`, `MISALIGNED` |
+| `cameras[].rx_version`, `rx_bad_marker` | the §2 counters for "protocol mismatch" and ignored markers (duplicates included) |
+| `cameras[].clock` | the phone's sync clock from `status.clock` (§3.1), `null` before the first status |
+| `cameras[].sync.rejected` | (from M2) §3.3 |
+| `cameras[].processing_on` | (from M2) the phone's `status.processing_on` (§4.5), `null` before the first status |
+| `cameras[].frame_age_ms` | (from M2) time since the session's latest accepted frame, `null` if none yet. A live session with no frames for 2 s is shown as "no frames: is UDP `frames_port` blocked by the firewall?" |
 | `cameras[].fps` … `stages_ms`, `cpu_app_pct`, `thermal`, `exposure_ms`, `iso` | the phone's latest `status` (§4.5); `null` when the phone did not measure it |
 | `cameras[].pose_age_ms` | capture→server-receive age of accepted frames over `pose.stats_window_s`; `null` fields while `UNSYNCED` |
 | `tags[]` | every tag seen within `pose.stale_ms` by any camera, plus every registered tag. `role` is `"unassigned"` for tags not in the registry. Floor fields are `null` when no calibrated, synced camera sees the tag (a registered unseen tag keeps its last known position with `seen: false`). `size_mm` = measured size on the floor. `placed` (floor tags only) = its position is known and it is used for calibration. |
-| `cars[]` | every car in `cars.toml`. `tag` = bound tag ID or `null`. `pose` is `null` without a bound, seen tag. The pose is the car's **rotation centre** (tag position corrected for parallax and the tag's `offset_mm`), heading corrected by `heading_offset_deg`. `pose.fresh` = `age_ms` ≤ `pose.stale_ms`. `pose.at_node` = node tag ID within `tracking.at_node_tol_mm`, else `null`. |
+| `cars[]` | every car in `cars.toml`. `tag` = bound tag ID or `null`. `pose` is `null` without a bound, seen tag. The pose is the car's **rotation centre** (tag position corrected for parallax and the tag's `offset_mm`), heading corrected by `heading_offset_deg`. `pose.fresh` = `age_ms` ≤ `pose.stale_ms`. `pose.at_node` = node tag ID within `tracking.at_node_tol_mm`, else `null`. `pose.usable_for_control` = the pose came from a camera that is, now, calibrated `OK`, synced, in a live session and in `app_mode` `tracking` (freshness is separate: control needs `fresh` **and** `usable_for_control`). |
 | `cars[].link.state` | `disconnected`, `connecting`, `connected`, `degraded`, `error` |
 | `cars[].motion` | last command sent: `{"left":…, "right":…, "ttl_ms":…}` or `null` when stopped |
-| `cars[].stopped_reason` | why the car may not move now: `null` (may move), or the first that applies in this order: `estop`, `no_link`, `no_tag`, `unsynced`, `camera_mode` (phone not in `tracking`), `uncalibrated`, `misaligned`, `stale_pose`, `bubble`, `operator`, `idle` |
+| `cars[].stopped_reason` | why the car may not move now: `null` (may move), or the first that applies in this order: `estop`, `no_link`, `no_tag`, `unsynced`, `camera_mode` (phone not in `tracking`), `uncalibrated` (camera `UNCALIBRATED` or `WEAK`), `misaligned`, `stale_pose`, `bubble`, `operator`, `idle` |
 | `cars[].battery` | always `"not_measured"` in v1 (no battery sensing; never a made-up number) |
 
 ### 6.3 `event` (as each event is logged)
@@ -529,17 +561,25 @@ skipped for that client, never queued.
 ### 7.1 General rules
 - JSON in and out. Errors: `{"error":{"code":"…","message":"…","details":{…}}}` with HTTP 400
   (validation), 403 (`remote_forbidden`, `bad_origin`), 404 (`not_found`), 409 (conflicts).
+- Codes used outside §7.4: `validation` (400; also a malformed body, a bad query value such as `limit`, or a
+  non-integer path parameter), `confirm_required` (400, `resume` without `confirm: true`), `not_found` (404:
+  unknown preset or camera, a camera without a calibration, no preview yet), `preset_exists` (409, saving over
+  a preset without `overwrite: true`), `preset_builtin` (409), `nodes_not_visible` (409), and
+  `version_conflict` (409) for `POST /api/layout/measure`, `PUT /api/layout/blocked` and preset apply, with
+  `details.current_layout_version` / `details.current_registry_version`.
 - **Local only:** requests from addresses other than 127.0.0.1 / ::1 get 403 `remote_forbidden`
   (M8 adds a login). Exempt: `GET /api/health`, `GET /api/beacon` and `POST /api/control/stop_all`.
-- **Origin check:** `POST`/`PUT`/`DELETE` with an `Origin` header not in `access.allowed_origins` get 403
-  `bad_origin`. Exempt: `POST /api/control/stop_all` (stopping can never do harm).
+- **Origin check:** `POST`/`PUT`/`DELETE` **carrying** an `Origin` header that is not in
+  `access.allowed_origins` get 403 `bad_origin` (browsers always send `Origin` on these methods; a request
+  without one is not from a web page, and is still subject to the local-only rule; `Origin: null` is never
+  allowed). Exempt: `POST /api/control/stop_all` (stopping can never do harm).
 - The operator recorded in events is `"local"` until M8 adds named logins.
 
 ### 7.2 Endpoints
 
 | Method and path | Body → response | Milestone |
 | --- | --- | --- |
-| `GET /api/health` | → `{"status":"ok","version":"0.1.0","proto":1,"mode":"sim","uptime_s":12.3}` | M0 |
+| `GET /api/health` | → `{"status":"ok","version":"0.1.0","proto":1,"mode":"sim","uptime_s":12.3,"loop_lag_ms":{"p95":0.9,"max":14.2}}`. `loop_lag_ms` (from M2): how late the server's event loop ran a timed probe, over the last minute (`null` values until measured) | M0 |
 | `GET /api/beacon` | → the §4.2 beacon message, `host` = the address the request arrived on (discovery for `wired_adb`) | M2 |
 | `GET /api/config` | → read-only summary: `cars` (name, priority, footprint_mm, color, transport), `pose.stale_ms`, `markers` (dictionary, default_size_mm), `roles`, `station_kinds`, `layout_rules` (the `[validation]` and `[tracking]` values of `map.toml`) | M1 |
 | `POST /api/control/stop_all` | `{}` → `{"estop":true}`. Latches the E-stop; idempotent | M1 |
@@ -554,16 +594,16 @@ skipped for that client, never queued.
 | `PUT /api/layout/blocked` | `{"nodes":[ids],"edges":[[a,b]],"expected_layout_version"}` → new layout. Admin-blocked nodes and edges; allowed while cars move (planning uses it from its next plan). | M1 |
 | `GET /api/venue-presets` | → `[{"name","description","builtin","tag_count","has_layout","has_camera"}]` | M1 |
 | `POST /api/venue-presets` | `{"name","description"?,"overwrite"?}` saves the current registry, layout and camera overrides | M1 |
-| `POST /api/venue-presets/{name}/apply` | `{"expected_registry_version"?}` → `{"registry_version","layout_version","check":{"matched":[ids],"moved":[{"id","distance_mm"}],"missing":[ids]}}`. `check` compares the preset's measured positions with what the camera sees now; moved nodes are marked `moved` (§7.5). Motion-affecting. | M1 |
+| `POST /api/venue-presets/{name}/apply` | `{"expected_registry_version"?}` → `{"registry_version","layout_version","check":{"matched":[ids],"moved":[{"id","distance_mm"}],"missing":[ids]}}`. `check` compares the preset's measured positions with what an `OK` camera sees now; moved nodes are marked `moved` (§7.5). If the preset changes the floor tags, every fit is reset (§7.4 Effects), so right after such an apply most nodes are `missing`; nodes that were pushed are then found by node-moved detection once the camera is `OK` again. Motion-affecting. | M1 |
 | `DELETE /api/venue-presets/{name}` | → 204; built-in → 409 `preset_builtin` | M1 |
 | `GET /api/cameras` | → list of `state.cameras` objects, each plus `caps` (the `hello` fields `sdk`, `cpu`, `camera`) | M1 |
-| `PUT /api/camera-settings` | `{"exposure_ms"?,"iso"?,"fps"?,"resolution"?,"full_scan_every"?}` overrides the `tuning.toml` defaults (saved with venue presets); `null` clears an override. Sent to phones as `settings` (§4.4). | M1 |
+| `PUT /api/camera-settings` | `{"exposure_ms"?,"iso"?,"fps"?,"resolution"?,"full_scan_every"?,"aruco3"?,"threads"?}` overrides the `tuning.toml` defaults (saved with venue presets); `null` clears an override (`aruco3`, `threads` from M2). Sent to phones as `settings` (§4.4). | M1 |
 | `GET /api/cameras/{cam}/benchmarks` | → `{"runs":[bench messages (§4.7) with "received_wall_ms"]}`, newest first | M2 |
 | `POST /api/cameras/{cam}/recalibrate` | `{}` → drops the fit and refits from visible floor tags | M1 |
-| `GET /api/cameras/{cam}/preview.jpg` | → latest JPEG, header `X-Capture-Age-Ms`; 404 if none | M2 |
+| `GET /api/cameras/{cam}/preview.jpg` | → latest JPEG (`image/jpeg`, `Cache-Control: no-store`), header `X-Capture-Age-Ms` (capture → now through clock sync; the header is left out while the camera is unsynced) and `X-Preview-Seq`; 404 `not_found` if none | M2 |
 | `GET /api/pairing` | → `{"pair_code":"K7QX-M2","devices":[{"device_id","cam","model","last_seen_wall_ms"}]}` | M1 |
 | `DELETE /api/pairing/{device_id}` | revokes the token and ends its session | M1 |
-| `GET /api/events?since_id=&limit=&car=&type=` | → `{"events":[§8…],"last_id":n}`; `limit` ≤ 1000, default 200 | M1 |
+| `GET /api/events?since_id=&limit=&car=&type=` | → `{"events":[§8…],"last_id":n}`: the newest `limit` events with `id > since_id`, newest first; `limit` ≤ 1000, default 200 | M1 |
 | Car link, manual drive, per-car stop | defined in M3 (additive) | M3 |
 
 ### 7.3 Tag roles
@@ -605,7 +645,9 @@ ignored by calibration, planning and control. Unassigned is the *absence* of a r
 `PUT /api/tags/{id}` replaces the whole record and must carry `"expected_version"`: the version the
 client last saw (0 for an unassigned tag). `GET /api/tags` returns
 `{"registry_version":n,"tags":[…]}`, where each entry is the document plus the live fields of
-`state.tags` (§6.2); unassigned tags that are currently seen appear with `role: "unassigned"` and `version: 0`.
+`state.tags` (§6.2), except that the live measured size is named **`measured_size_mm`** there (`size_mm` stays
+the printed size of the document); unassigned tags that are currently seen appear with `role: "unassigned"`
+and `version: 0`.
 
 **Validation and conflicts** (HTTP 400 or 409, `details` names the fields or other tags):
 
@@ -651,7 +693,7 @@ The road network: nodes from the registry (topology), positions from the last `m
 | `edges[]` | one per pair of **orthogonal neighbours**: nodes `(r, c)`–`(r, c+1)` and `(r, c)`–`(r+1, c)`, both present. Never diagonal, never across a missing node. `a` is the node with the smaller `(row, col)`. |
 | `edges[].length_mm`, `bearing_deg` | measured distance and direction from `a` to `b` (floor frame); `null` if either node is unmeasured |
 | `edges[].angle_error_deg` | bearing minus the ideal row/column direction (`grid_rotation_deg`, or +90° for a column edge), in (−180, 180] |
-| `edges[].state` | `ok`, `blocked` (`blocked_by` as for nodes; an edge touching a blocked or moved node is blocked too) |
+| `edges[].state` | `ok`, `blocked` (`blocked_by` as for nodes; an edge touching a blocked node is blocked with that node's `blocked_by`; an edge touching a `moved` node has `blocked_by` `"moved:<node id>"`, while the moved node itself has state `moved` and `blocked_by` `null`) |
 | `warnings[].code` | `edge_angle` (> `validation.max_edge_angle_deg`), `edge_short` (< longest car footprint + `edge_clearance_mm`), `node_outside_view` (within `view_margin_mm` of every view edge), `spacing_mismatch` (only if `expected_spacing_mm` > 0), `isolated_node` (no usable edge). Warnings never change the layout. |
 | `footprints[]` | each calibrated camera's view on the floor |
 

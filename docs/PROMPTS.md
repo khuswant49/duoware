@@ -16,8 +16,8 @@ Set both before sending the prompt. Start a new session for each prompt.
 | Prompt | Model | Effort |
 | --- | --- | --- |
 | 1 — architecture and M0 | Opus 5.5 | high |
-| 2 — implement M1, M2, M4, M7, M8 | Sonnet 5.5 | medium |
-| 2 — implement M3 (Android app), M5 (single-car motion), M6 (two cars, reservations, deadlock) | Sonnet 5.5 | high |
+| 2 — implement M1, M3, M4, M7, M8 | Sonnet 5.5 | medium |
+| 2 — implement M2 (Android app), M5 (single-car motion), M6 (two cars, reservations, deadlock) | Sonnet 5.5 | high |
 | 3 — review a milestone, plan the next | Opus 5.5 | high |
 | 4 — hardware problem | Opus 5.5 | high; xhigh if the first attempt didn't find the cause |
 | Small change to one or two files | Sonnet 5.5 | low or medium |
