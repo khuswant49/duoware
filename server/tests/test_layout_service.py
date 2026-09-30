@@ -175,6 +175,27 @@ def test_a_pushed_node_is_marked_moved_after_the_confirm_time_and_clears(rig, en
     assert env.events.last_id == n                                        # events only on state changes
 
 
+def test_a_recalibrating_camera_never_makes_nodes_look_moved(rig, env):
+    """A floor-tag change resets the fit; while it refits (WEAK, positions far from the origin tag are off by tens of
+    mm) the layout must not read that as pushed nodes."""
+    rig.layout.measure(rig.layout.version)
+    env.registry.put(9, {"role": "anchor", "size_mm": 90}, 0)
+    statuses = set()
+    for i in range(330):                                  # the phone's cadence: a full scan every 10th frame
+        if i % 10 == 0:
+            rig.step(1)
+        else:
+            rig.step(1, scan="roi", searched=(1, 5), only={1, 5})
+        rig.layout.tick()
+        status = rig.world.calib(1).status.value
+        statuses.add(status)
+        if status != "OK":                                # nothing is reported from a fit that is still being built
+            assert rig.world.live_position(13) is None and rig.world.node_position(13) is None
+    assert {"UNCALIBRATED", "WEAK", "OK"} <= statuses and rig.world.calib(1).status.value == "OK"
+    assert not [e for e in env.events.query(type="layout", limit=500) if e.key == "node_moved"]
+    assert {n["state"] for n in rig.layout.current()["nodes"]} == {"ok"}
+
+
 def test_a_node_under_a_car_is_not_marked_moved(rig, env):
     rig.layout.measure(rig.layout.version)
     rig.scene.hidden.add(6)

@@ -1,7 +1,5 @@
 """Step 6: pure geometry helpers and the simulated camera model."""
 
-import math
-
 import numpy as np
 import pytest
 

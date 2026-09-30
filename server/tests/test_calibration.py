@@ -3,7 +3,6 @@
 import math
 
 import numpy as np
-import pytest
 from scene import Scene
 
 from duoware.localization.calibration import CalibStatus, CameraCalibration

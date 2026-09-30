@@ -1,6 +1,5 @@
 """Step 8: REST endpoints — happy paths and error codes (PROTOCOL.md §7)."""
 
-import pytest
 from conftest import make_hello
 from scene import Scene, feed_frames, status
 

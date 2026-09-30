@@ -1,9 +1,5 @@
 """Step 9: the simulated detector and the scenario loader."""
 
-import dataclasses
-import shutil
-from pathlib import Path
-
 import numpy as np
 import pytest
 

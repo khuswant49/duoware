@@ -15,7 +15,7 @@ import numpy as np
 
 from duoware.clock import Clock
 from duoware.ingest.sessions import Session
-from duoware.localization.calibration import CameraCalibration
+from duoware.localization.calibration import CalibStatus, CameraCalibration
 from duoware.localization.floor_tags import FloorTags
 from duoware.localization.geometry import (
     apply_offset, heading_from_corners, parallax_correct, side_length_mm, to_floor, wrap_deg,
@@ -227,7 +227,7 @@ class WorldModel:
             return WorldSnapshot(now, tags, cars, cams)
 
     def node_position(self, tag_id: int, now_ns: int | None = None) -> tuple[float, float] | None:
-        """Averaged floor position of a floor tag that a usable camera sees right now, else None."""
+        """Averaged floor position of a floor tag that a camera with a good fit (OK) sees right now, else None."""
         now = self.clock.mono_ns() if now_ns is None else now_ns
         with self._lock:
             o, t = self._obs.get(tag_id), self.floor.get(tag_id)
@@ -236,17 +236,23 @@ class WorldModel:
             stale_ns = int(self.settings.tuning.pose.stale_ms * NS_PER_MS)
             for cam in o.cams:
                 c = self.calibs.get(cam)
-                if c is not None and c.usable and now - self._last_frame.get(cam, -stale_ns * 2) <= stale_ns:
+                if c is not None and c.status == CalibStatus.OK and now - self._last_frame.get(cam, -stale_ns * 2) <= stale_ns:
                     return (t.x, t.y)
             return None
 
     def live_position(self, tag_id: int, now_ns: int | None = None) -> tuple[float, float] | None:
-        """Where the camera sees a tag right now (single-frame, not the averaged position)."""
+        """Where a camera with a good fit (status OK) sees a tag right now (single frame, not the averaged
+        position). While a camera refits (WEAK: one tag, positions far from it are off by tens of mm) nothing is
+        reported, so a recalibration can never look like a pushed node."""
         now = self.clock.mono_ns() if now_ns is None else now_ns
         with self._lock:
             o = self._obs.get(tag_id)
             stale_ns = int(self.settings.tuning.pose.stale_ms * NS_PER_MS)
-            if o is None or o.x is None or not any(now - self._last_frame.get(c, -stale_ns * 2) <= stale_ns for c in o.cams):
+            if o is None or o.x is None:
                 return None
-            return (o.x, o.y)
+            for cam in o.cams:
+                c = self.calibs.get(cam)
+                if c is not None and c.status == CalibStatus.OK and now - self._last_frame.get(cam, -stale_ns * 2) <= stale_ns:
+                    return (o.x, o.y)
+            return None
 

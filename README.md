@@ -8,8 +8,9 @@ driven by a laptop server, supervised from a web dashboard. Rebuild of DUO-WARE 
 - Working rules and architecture map: [CLAUDE.md](CLAUDE.md)
 - Plans: [docs/plans/](docs/plans/) · Hardware: [docs/HARDWARE.md](docs/HARDWARE.md), [docs/HARDWARE_LOG.md](docs/HARDWARE_LOG.md)
 
-**Status:** M0 (design and skeletons). Only the health endpoint, an empty dashboard and an empty app exist.
-Features arrive milestone by milestone ([roadmap](docs/plans/ROADMAP.md)).
+**Status:** M1 done in simulation (server core, simulator, tag registry, road-network layout, dashboard live map).
+Nothing has been run on hardware yet; the Android app and firmware are still M0 skeletons. Features arrive
+milestone by milestone ([roadmap](docs/plans/ROADMAP.md)).
 
 ## Layout
 
@@ -50,13 +51,19 @@ Features arrive milestone by milestone ([roadmap](docs/plans/ROADMAP.md)).
 server/.venv/Scripts/python -m duoware          # hardware mode
 server/.venv/Scripts/python -m duoware --sim    # simulation mode: never opens Bluetooth or serial ports
 ```
-Health check: <http://127.0.0.1:8000/api/health>. Once built, the dashboard is served at <http://127.0.0.1:8000/>.
+Options: `--config-dir`, `--data-dir`, `--host`, `--port`. At start it prints the phone pairing code (or uses
+`DUO_PAIR_CODE` from `.env`) and the dashboard URL. Health check: <http://127.0.0.1:8000/api/health>. The built
+dashboard (`npm run build`) is served at <http://127.0.0.1:8000/>.
 
-**Simulator** (M1+; in a second terminal, with the server in `--sim` mode)
+**Simulator** (second terminal, server in `--sim` mode; give both the same `DUO_PAIR_CODE`, in `.env` or the
+environment)
 ```bash
 server/.venv/Scripts/python -m duoware.sim
 ```
-Then on the dashboard's Tags page apply the `sim_3x3` venue preset and press **Measure layout**.
+The simulated phone finds the server by its beacon (or uses `config/sim.toml [server]`), pairs, streams frames and
+answers clock sync; two scripted cars drive back and forth. Then on the dashboard's **Tags** page apply the
+`sim_3x3` venue preset, wait ~10 s for the camera to calibrate, and press **Measure layout** (press it again if a
+moving car hides a node). The **Live** page shows the map, the camera panel and the latest events.
 
 **Dashboard**
 ```bash

@@ -5,8 +5,6 @@ import json
 import re
 from pathlib import Path
 
-import pytest
-
 from duoware.protocol._read import Obj
 from duoware.protocol.dashboard import EventRecord, HelloMsg, Layout, StateMsg
 from duoware.protocol.phone import (

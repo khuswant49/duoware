@@ -4,7 +4,7 @@ import math
 
 import numpy as np
 import pytest
-from scene import MS, Rig, Scene, sim_camera, status
+from scene import MS, Rig, sim_camera, status
 
 from duoware.localization.geometry import wrap_deg
 
