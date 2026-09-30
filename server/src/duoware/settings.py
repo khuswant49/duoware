@@ -275,6 +275,11 @@ def _convert(tp: Any, value: Any, path: str) -> Any:
         if len(value) != len(args):
             raise SettingsError(f"{path}: expected an array of {len(args)} values, got {len(value)}")
         return tuple(_convert(a, v, f"{path}[{i}]") for i, (a, v) in enumerate(zip(args, value)))
+    if origin is dict:
+        _, vt = typing.get_args(tp)
+        if not isinstance(value, dict):
+            raise SettingsError(f"{path}: expected a table, got {type(value).__name__}")
+        return {str(k): _convert(vt, v, f"{path}.{k}") for k, v in value.items()}
     if origin in (typing.Union, types.UnionType):
         raise SettingsError(f"{path}: unsupported union type in settings.py")
     if tp is bool:
@@ -318,6 +323,11 @@ def _read_toml(path: Path) -> dict:
         raise SettingsError(f"{path}: file not found") from e
     except tomllib.TOMLDecodeError as e:
         raise SettingsError(f"{path}: invalid TOML ({e})") from e
+
+
+def load_toml_as(cls: type, path: Path) -> Any:
+    """Strictly loads one TOML file into the frozen dataclass `cls` (used by the simulator scenario too)."""
+    return _load(cls, path)
 
 
 def _load(cls: type, path: Path) -> Any:
