@@ -1,0 +1,64 @@
+# Built-in venue preset: the printed DUO-WARE 1 tag kit (brief section 3). Roles only.
+#
+# A venue preset is DATA offered on the Tags page / venue wizard (DECISIONS.md D8, D28). Nothing in the
+# code assumes these IDs. Applying a preset replaces the tag registry (and the layout and camera
+# settings when the preset has them), with the same safety rule as any role change (all cars stopped)
+# and one event-log entry. Built-in presets are read-only; presets saved by the admin go into
+# data/state.db. Field names follow the tag registry schema in PROTOCOL.md §7.4.
+#
+# This preset has no rows/columns and no measured layout: the tag spacing differs per venue.
+# After applying it, run "Suggest rows/columns", confirm, then "Measure layout".
+
+name = "duoware1_kit"
+description = "DUO-WARE 1 printed kit: cars 1 and 5, station nodes 2-4, anchors 10-13 (10 = origin)"
+
+[[tag]]
+id = 1
+role = "car"
+size_mm = 80
+car = "DUO-A"
+
+[[tag]]
+id = 5
+role = "car"
+size_mm = 80
+car = "DUO-B"
+
+[[tag]]
+id = 2
+role = "node"
+size_mm = 90
+station = { name = "pickup", kind = "pickup" }
+
+[[tag]]
+id = 3
+role = "node"
+size_mm = 90
+station = { name = "home", kind = "home" }
+
+[[tag]]
+id = 4
+role = "node"
+size_mm = 90
+station = { name = "drop-off", kind = "dropoff" }
+
+[[tag]]
+id = 10
+role = "anchor"
+size_mm = 90
+origin = true
+
+[[tag]]
+id = 11
+role = "anchor"
+size_mm = 90
+
+[[tag]]
+id = 12
+role = "anchor"
+size_mm = 90
+
+[[tag]]
+id = 13
+role = "anchor"
+size_mm = 90

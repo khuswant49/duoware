@@ -1,0 +1,42 @@
+# DUO-WARE 2 road network rules (brief 4.2 and 4.6; DECISIONS.md D24, D27-D29).
+#
+# There is no fixed grid here. The road network is a set of NODE tags on the floor:
+#   - topology comes from the admin: each node tag gets a (row, column) on the Tags page
+#     (the dashboard suggests them from the detected positions);
+#   - geometry comes from the camera: "Measure layout" stores each node's position and each
+#     edge's length and direction. Spacing may differ between venues and between edges.
+# Edges exist only between orthogonal neighbours (same row, column +-1; or same column, row +-1).
+# Never diagonal, never skipping a missing node.
+#
+# Frame: floor millimetres, +x right, +y down, degrees clockwise (DECISIONS.md D22), origin at the
+# origin tag. The "grid frame" is the floor frame rotated by the measured grid rotation (D27).
+# This file holds only the rules and tolerances; the measured layout lives in data/state.db.
+
+[validation]
+# Warnings shown on the map after "Measure layout" and while running. They never change the layout.
+max_edge_angle_deg = 15         # edge direction vs its row/column direction (brief 4.6)
+# Minimum edge length = longest car footprint (cars.toml) + this clearance. Shorter edges are flagged:
+# two cars on neighbouring nodes would be closer than the safety bubble allows.
+edge_clearance_mm = 80
+view_margin_mm = 60             # a node closer than this to the edge of every camera's view is flagged
+# Optional check against a typed-in spacing (venue notes). 0 = no check. Never used for driving.
+expected_spacing_mm = 0
+spacing_tolerance_mm = 40
+
+[suggest]
+# Row/column suggestion from detected positions (dashboard "Suggest rows/columns").
+# Positions are rotated into the fitted grid direction, then sorted along each axis; a gap larger than
+# this fraction of the median nearest-neighbour distance starts a new row/column.
+gap_fraction = 0.5
+
+[tracking]
+at_node_tol_mm = 40             # a car whose rotation centre is this close to a node is "at" it
+node_move_tol_mm = 30           # a node tag seen this far from its measured position...
+node_move_confirm_s = 2.0       # ...for this long is marked MOVED and treated as blocked until re-measured
+obstacle_block_radius_mm = 150  # an obstacle tag blocks every node and edge within this distance
+
+[blocked]
+# Nodes (tag IDs) or edges ([tag, tag]) that are always blocked at this site, whatever the venue preset.
+# Prefer blocking on the dashboard map (saved with the venue preset) for anything venue-specific.
+nodes = []
+edges = []

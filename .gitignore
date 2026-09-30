@@ -1,0 +1,34 @@
+# Secrets
+.env
+
+# Runtime state and logs
+data/
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Node / dashboard
+node_modules/
+dashboard/dist/
+
+# Android / Gradle
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.kotlin/
+android/.idea/
+*.iml
+captures/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

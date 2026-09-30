@@ -1,0 +1,42 @@
+# DUO-WARE 2 server settings: network ports, storage, access.
+# Read once at start by duoware/settings.py. Wire formats that use these ports: PROTOCOL.md.
+# Secrets never go here: they live in .env (see .env.example).
+
+[http]
+# 0.0.0.0 so phones on the USB tether / WiFi can reach /ws/phone. The dashboard API stays
+# local-only regardless (see [access]); DECISIONS.md D17.
+host = "0.0.0.0"
+port = 8000
+
+[udp]
+# Phone -> server marker frames and clock-sync replies (PROTOCOL.md §2, §3).
+frames_port = 47801
+# Server -> broadcast discovery beacon; phones listen on this port (PROTOCOL.md §4).
+beacon_port = 47800
+beacon_interval_s = 1.0
+
+[storage]
+# Relative to the repository root. Git-ignored. Holds state.db (tag registry, presets, pairings,
+# learned calibration) and events.db (event log). Delete events.db freely; state.db is precious.
+data_dir = "data"
+
+[access]
+# Dashboard REST + /ws/dashboard: requests from other machines are refused until M8 adds the
+# access-code login. /api/health and /ws/phone are always reachable.
+allow_remote_dashboard = false
+# Phone pairing: this many wrong pairing codes from one IP lock that IP out for pair_lock_s
+# (ported from DUO-WARE 1 control/auth.py LoginThrottle).
+pair_max_failures = 5
+pair_lock_s = 60
+# Origins allowed to send POST/PUT/DELETE (cross-site request guard, PROTOCOL.md §7.1).
+# The Vite dev server origin is included for development.
+allowed_origins = [
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
+[dashboard]
+# Rate of the "state" snapshot on /ws/dashboard (PROTOCOL.md §6.2).
+state_hz = 20

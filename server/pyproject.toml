@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "duoware"
+version = "0.0.1"
+description = "DUO-WARE 2 laptop server: localization, planning, car links, dashboard API"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",   # includes the websockets package (used by the simulator's phone client)
+    "numpy>=2.1",
+    "opencv-python-headless>=4.10",  # anchor fits (homography / affine / similarity with RANSAC)
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "httpx2",  # FastAPI/Starlette TestClient (plain httpx is deprecated there)
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

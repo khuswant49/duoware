@@ -1,0 +1,55 @@
+# DUO-WARE 2 cars: one [[car]] table per physical car.
+#
+# What lives here: how to reach each car and rough starting guesses for its motion.
+# What does NOT live here:
+#   - which ArUco tag is on which car: the admin binds tags on the dashboard Tags page
+#     (tag registry, PROTOCOL.md §7.4, DECISIONS.md D8);
+#   - measured calibration (min PWM, trim, turn rate, coast, tag offset): learned by the
+#     calibration routine (M4) and stored in data/state.db, per car name.
+#
+# Hardware facts behind these values: docs/HARDWARE.md.
+
+[[car]]
+# Must equal the <name> the firmware reports in its ID line (PROTOCOL.md §5.3). A car that answers
+# with another name is refused, so a swapped MAC can never drive the wrong car.
+name = "DUO-A"
+firmware = "car_esp32"          # folder under firmware/
+# rfcomm = Bluetooth Classic socket by MAC (preferred); serial = COM port fallback.
+# The simulator ignores this and uses TCP (config/sim.toml); DECISIONS.md D14.
+transport = "rfcomm"
+# Fill in after pairing once in Windows Bluetooth settings. Empty = "connect" reports
+# "MAC not configured" for this car and leaves the other car unaffected.
+mac = ""
+rfcomm_channel = 1
+com_port = ""                   # optional fallback, e.g. "COM8"; empty = not used
+# Right-of-way tie-break when two cars want the same cell (higher wins). Distinct per car.
+priority = 2
+# Rough outer size, length x width in mm. Used for the safety bubble and drawing only, so an
+# estimate to +-30 mm is fine: nothing precise depends on it.
+footprint_mm = [200, 160]
+color = "#e4572e"               # dashboard colour
+
+  [car.prior]
+  # Starting guesses only, replaced by M4 calibration. PWM is the raw -255..255 motor command.
+  min_pwm = 90                  # smallest PWM expected to keep a wheel turning (DUO-WARE 1: 85)
+  kick_pwm = 180                # break-away PWM for the first ~90 ms from rest (DUO-WARE 1 KICKSTART)
+  kick_ms = 90
+  trim = 1.0                    # right wheel PWM = left PWM * trim for a straight line
+
+[[car]]
+name = "DUO-B"
+firmware = "car_uno"
+transport = "rfcomm"
+mac = ""
+rfcomm_channel = 1              # HC-05 SPP channel
+com_port = ""
+priority = 1
+footprint_mm = [200, 160]
+color = "#3a86ff"
+
+  [car.prior]
+  # Uno + L298N + HC-05. Pins and power are still open items (docs/HARDWARE.md); these are guesses.
+  min_pwm = 100
+  kick_pwm = 190
+  kick_ms = 90
+  trim = 1.0

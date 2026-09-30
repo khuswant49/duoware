@@ -1,0 +1,80 @@
+# Built-in venue preset for the simulator's default world (config/sim.toml): a 3 x 3 road network.
+# Roles and rows/columns only; after applying it, press "Measure layout" (the positions come from
+# the simulated camera, exactly as at a real venue). See duoware1_kit.toml for how presets work.
+#
+#   row 0:  10 (origin) -- 2 (pickup) -- 11
+#   row 1:   3 (home)   -- 6          -- 4 (drop-off)
+#   row 2:  12          -- 7          -- 13
+
+name = "sim_3x3"
+description = "Simulator: 3 x 3 nodes, uneven spacing, crooked, grid rotated ~8 degrees"
+
+[[tag]]
+id = 1
+role = "car"
+size_mm = 80
+car = "DUO-A"
+
+[[tag]]
+id = 5
+role = "car"
+size_mm = 80
+car = "DUO-B"
+
+[[tag]]
+id = 10
+role = "node"
+size_mm = 90
+origin = true
+grid = [0, 0]
+
+[[tag]]
+id = 2
+role = "node"
+size_mm = 90
+grid = [0, 1]
+station = { name = "pickup", kind = "pickup" }
+
+[[tag]]
+id = 11
+role = "node"
+size_mm = 90
+grid = [0, 2]
+
+[[tag]]
+id = 3
+role = "node"
+size_mm = 90
+grid = [1, 0]
+station = { name = "home", kind = "home" }
+
+[[tag]]
+id = 6
+role = "node"
+size_mm = 90
+grid = [1, 1]
+
+[[tag]]
+id = 4
+role = "node"
+size_mm = 90
+grid = [1, 2]
+station = { name = "drop-off", kind = "dropoff" }
+
+[[tag]]
+id = 12
+role = "node"
+size_mm = 90
+grid = [2, 0]
+
+[[tag]]
+id = 7
+role = "node"
+size_mm = 90
+grid = [2, 1]
+
+[[tag]]
+id = 13
+role = "node"
+size_mm = 90
+grid = [2, 2]
