@@ -63,7 +63,7 @@ class CameraCalibration:
         self._force = False
         self._want_fit = False
         self._fit_reason = ""
-        self._buf: deque = deque(maxlen=max(1, cfg.settle_frames))
+        self._tag_buf: dict[int, deque] = {}          # tag -> its last settle_frames image corners (steady-frame average)
         self._placing: dict[int, list[tuple[float, float, float, float]]] = {}
         self.size_warn: dict[int, bool] = {}          # floor tag -> measured size differs from printed
 
@@ -87,7 +87,7 @@ class CameraCalibration:
         self.rms_mm = self.residual_mm = None
         self.tags_used = []
         self.model = ""
-        self._buf.clear()
+        self._tag_buf.clear()
         self._placing.clear()
         self._want_fit = False
         self._force = False
@@ -101,7 +101,7 @@ class CameraCalibration:
         ow, oh = self.image_size
         if (w, h) == (ow, oh):
             return
-        self._buf.clear()
+        self._tag_buf.clear()
         if self.h is None:
             self.image_size = (w, h)
             return
@@ -152,25 +152,29 @@ class CameraCalibration:
         self.tags_seen = placed
         if self.usable:
             self._measure_unplaced([i for i in visible if i not in placed_all], markers)
+        for i in visible:                                # steady-frame buffers: averaging removes pixel noise
+            c = np.asarray(markers[i], dtype=np.float64).reshape(4, 2)
+            buf = self._tag_buf.setdefault(i, deque(maxlen=max(1, self.cfg.settle_frames)))
+            if buf and np.abs(c - buf[-1]).mean() > self.cfg.move_tol_px:
+                buf.clear()                              # this tag moved: start its average again
+            buf.append(c)
         if not placed:
             self.residual_mm = None
-            self._buf.clear()
             return
         img = np.concatenate([np.asarray(markers[i], dtype=np.float64).reshape(4, 2) for i in placed])
         wld = np.concatenate([placed_all[i].world_corners() for i in placed])
-        key = tuple(placed)
-        if self._buf and (self._buf[-1][0] != key or np.abs(img - self._buf[-1][1]).mean() > self.cfg.move_tol_px):
-            self._buf.clear()
-        self._buf.append((key, img))
-
         if self.h is None or self._force:
             self._want_fit, self._fit_reason = True, "initial" if self.h is None else "requested"
         else:
             self._check_locked_fit(placed, markers, img, wld)
-        if self._want_fit and len(self._buf) >= self.cfg.settle_frames:
-            avg = np.mean([b[1] for b in self._buf], axis=0)
-            if self._fit(avg, wld, placed):
-                self._want_fit = False
+        if self._want_fit:
+            # Cars cover tags while driving (D28): fit from whichever visible tags have a steady average, not
+            # from one fixed set that has to stay visible for settle_frames in a row.
+            ready = [i for i in placed if len(self._tag_buf[i]) >= self.cfg.settle_frames]
+            if ready:
+                avg = np.concatenate([np.mean(self._tag_buf[i], axis=0) for i in ready])
+                if self._fit(avg, np.concatenate([placed_all[i].world_corners() for i in ready]), ready):
+                    self._want_fit = False
 
     # ------------------------------------------------------------------------------ locked fit: drift and moved tags
 
@@ -193,6 +197,8 @@ class CameraCalibration:
             self._restore_status()
         elif bad:
             self._drift_count += 1
+            if self.status != CalibStatus.MISALIGNED:
+                self._tag_buf.clear()                    # the camera moved: earlier averages are worthless
             self._set_status(CalibStatus.MISALIGNED, f"floor tags are off by {self.residual_mm:.0f} mm: the camera moved?",
                              residual_mm=round(self.residual_mm, 1), tags=bad)
             if self._drift_count >= self.cfg.drift_frames and not self._want_fit:
@@ -212,10 +218,7 @@ class CameraCalibration:
 
     def _measure_unplaced(self, ids: list[int], markers: dict[int, np.ndarray]) -> None:
         """Measures unplaced floor tags through this calibrated camera and places them once steady."""
-        for tid in list(self._placing):
-            if tid not in ids:
-                del self._placing[tid]
-        for tid in ids:
+        for tid in ids:                                  # a tag hidden by a car keeps its progress (it did not move)
             c = self.to_world(np.asarray(markers[tid], dtype=np.float64).reshape(4, 2))
             cx, cy = c.mean(axis=0)
             est = self._placing.setdefault(tid, [])
@@ -286,9 +289,7 @@ class CameraCalibration:
     def _refine(self, used: list[int]) -> None:
         """Metric refinement: the homography fitted to automatically located positions inherits their errors, so
         adjust the mapping and those positions together until every tag image is a square of its printed size."""
-        key = self._buf[-1][0]
-        avg = np.mean([b[1] for b in self._buf], axis=0)
-        imgs = {t: avg[key.index(t) * CORNERS:(key.index(t) + 1) * CORNERS] for t in key if t in used}
+        imgs = {t: np.mean(self._tag_buf[t], axis=0) for t in used if len(self._tag_buf.get(t, ())) > 0}
         if len(imgs) < MIN_TAGS_HOMOGRAPHY:
             return
         result = refine_homography(self.h, imgs, self.floor.placed())

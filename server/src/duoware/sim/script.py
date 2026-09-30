@@ -15,7 +15,7 @@ from duoware.sim.world import SimWorld
 REFRESH_S = 0.1              # plan step 9: refreshed like a real controller, every 100 ms ...
 TTL_MS = 300                 # ... with TTL 300
 ARRIVE_MM = 5.0              # plan step 9: stop within 5 mm of the tag
-TURN_DONE_DEG = 1.5          # turning in place ends within this heading error
+TURN_DONE_DEG = 3.0          # turning in place ends within this heading error (the straight run steers out the rest)
 TURN_SLOW_DEG = 20.0         # turn rate falls linearly below this heading error
 TURN_MIN_FRACTION = 0.25     # ... down to this fraction of turn_deg_s
 DRIVE_KP = 3.0               # straight run: speed = DRIVE_KP x distance (1/s), capped at speed_mm_s
@@ -63,7 +63,7 @@ class ScriptDriver:
                 continue
             err = wrap_deg(math.degrees(math.atan2(ty - y, tx - x)) - h)
             if self._phase[name] == "turn":
-                if abs(err) <= TURN_DONE_DEG and abs(ph.v_left - ph.v_right) < 15:
+                if abs(err) <= TURN_DONE_DEG:
                     self._phase[name] = "drive"
                 else:
                     rate = self.cfg.turn_deg_s * max(TURN_MIN_FRACTION, min(1.0, abs(err) / TURN_SLOW_DEG))

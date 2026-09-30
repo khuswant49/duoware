@@ -95,6 +95,7 @@ class SimPhone:
         self._lost_rescans = 0
         self._force_full = False
         self._connected = asyncio.Event()
+        self._switching = False
 
     # ------------------------------------------------------------------------------ clocks
 
@@ -180,11 +181,18 @@ class SimPhone:
         except Exception:
             pass
 
-    async def switch_session(self, new_link_mode: str) -> None:
-        """Test hook: end this session and open a new one (new `sid`) in another connection mode, with the stored token."""
-        await self.disconnect()
-        self.link_mode = new_link_mode
-        await self.connect()
+    async def switch_session(self, new_link_mode: str, gap_s: float = 0.0) -> None:
+        """Test hook: end this session and open a new one (new `sid`) in another connection mode, with the stored
+        token, after `gap_s` off the air (a real mode switch re-discovers the server, PROTOCOL.md §4.1)."""
+        self._switching = True                       # keeps `run` from reconnecting on its own during the gap
+        try:
+            await self.disconnect()
+            self.link_mode = new_link_mode
+            if gap_s > 0:
+                await asyncio.sleep(gap_s)
+            await self.connect()
+        finally:
+            self._switching = False
 
     def set_app_mode(self, mode: str) -> None:
         self.app_mode = mode
@@ -195,6 +203,9 @@ class SimPhone:
         """Connect, and reconnect after a dropped session, until stopped."""
         while not self._stop:
             try:
+                if self._switching:
+                    await asyncio.sleep(0.02)
+                    continue
                 if self.session is None:
                     await self.connect()
                 await asyncio.wait([t for t in self.session.tasks], return_when=asyncio.FIRST_COMPLETED)   # type: ignore[union-attr]
