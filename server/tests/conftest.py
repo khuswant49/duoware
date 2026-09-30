@@ -79,3 +79,33 @@ def patched_settings(settings, **ports):
     http = dataclasses.replace(srv.http, port=ports["http_port"]) if "http_port" in ports else srv.http
     tcp = dataclasses.replace(srv.tcp, frames_port=ports["tcp_port"]) if "tcp_port" in ports else srv.tcp
     return dataclasses.replace(settings, server=dataclasses.replace(srv, udp=udp, http=http, tcp=tcp))
+
+
+# ---------------------------------------------------------------------------- API fixtures
+
+from fastapi.testclient import TestClient
+
+from duoware.api.deps import client_host
+from duoware.app import create_app
+from duoware.settings import load_settings
+
+
+def make_app(tmp_path, local=True, dashboard_dir=None, allow_remote=False):
+    """App on a temp data dir, free UDP ports, no beacon. TestClient's host is "testclient" (a REMOTE address for
+    the guards); `local=True` overrides `client_host` so ordinary tests act like the local dashboard."""
+    st = patched_settings(load_settings(data_dir=tmp_path / "data"), frames_port=0, beacon_port=0, beacon_interval_s=3600)
+    if allow_remote:
+        acc = dataclasses.replace(st.server.access, allow_remote_dashboard=True)
+        st = dataclasses.replace(st, server=dataclasses.replace(st.server, access=acc))
+    app = create_app(st, mode="sim", interfaces_fn=lambda: [], dashboard_dir=dashboard_dir or tmp_path / "no-dist")
+    if local:
+        app.dependency_overrides[client_host] = lambda: "127.0.0.1"
+    return app
+
+
+@pytest.fixture
+def api(tmp_path):
+    app = make_app(tmp_path)
+    with TestClient(app) as c:
+        c.sv = app.state.get_services()
+        yield c

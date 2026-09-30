@@ -264,6 +264,16 @@ class LayoutService:
                              reason="operator changed the admin blocks on the map")
             return self.current()
 
+    def node_at(self, x: float, y: float) -> int | None:
+        """The node whose measured position is within `at_node_tol_mm` of (x, y) (nearest wins), else None."""
+        tol = self._settings.map_rules.tracking.at_node_tol_mm
+        best: tuple[float, int] | None = None
+        for sid, (px, py) in self._doc["positions"].items():
+            d = ((x - px) ** 2 + (y - py) ** 2) ** 0.5
+            if d <= tol and (best is None or d < best[0]):
+                best = (d, int(sid))
+        return None if best is None else best[1]
+
     # ------------------------------------------------------------------------------ suggestion
 
     def suggest(self, now_ns: int | None = None) -> dict:

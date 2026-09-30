@@ -119,3 +119,13 @@ class Rig:
 
     def converge(self, n: int = 60) -> None:
         self.step(n)
+
+
+def feed_frames(sv, session, scene: Scene, n: int = 1, scan: str = "full", delay_ms: float = 40.0, **kw) -> None:
+    """Pushes synthetic frames into a live `Services` (real clock). Each frame has a fresh clean sync sample
+    (phone clock = server clock), so the camera counts as synced."""
+    for _ in range(n):
+        t = sv.clock.mono_ns()
+        session.clock_sync.add(t - MS, t - MS // 2, t - MS // 2, t)
+        now = sv.clock.mono_ns()
+        sv.world.on_frame(session, scene.frame(session, now, scan=scan, delay_ms=delay_ms, **kw), now)

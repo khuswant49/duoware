@@ -31,6 +31,7 @@ class FramesEndpoint(asyncio.DatagramProtocol):
     def __init__(self, sessions: PhoneSessions, sink: FrameSink, clock: Clock, cfg: ClockSyncCfg) -> None:
         self.sessions, self.sink, self.clock, self.cfg = sessions, sink, clock, cfg
         self.transport: asyncio.DatagramTransport | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._tasks: dict[str, asyncio.Task] = {}
         self._last_logged: dict[tuple[str, str], int] = {}
         sessions.on_opened.append(self.attach)
@@ -40,6 +41,7 @@ class FramesEndpoint(asyncio.DatagramProtocol):
 
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         self.transport = transport                              # type: ignore[assignment]
+        self._loop = asyncio.get_running_loop()
         for s in self.sessions.live():
             self.attach(s)
 
@@ -114,11 +116,30 @@ class FramesEndpoint(asyncio.DatagramProtocol):
 
     # ------------------------------------------------------------------------------ sending sync requests
 
+    def _on_loop(self, fn, *args) -> None:
+        """Sessions may be opened from another thread (a test, a worker): run on the endpoint's loop."""
+        try:
+            here = asyncio.get_running_loop()
+        except RuntimeError:
+            here = None
+        if self._loop is None:
+            return
+        if here is self._loop:
+            fn(*args)
+        else:
+            self._loop.call_soon_threadsafe(fn, *args)
+
     def attach(self, sess: Session) -> None:
+        self._on_loop(self._start, sess)
+
+    def _start(self, sess: Session) -> None:
         if self.transport is not None and sess.sid not in self._tasks:
             self._tasks[sess.sid] = asyncio.get_running_loop().create_task(self._sync_loop(sess))
 
     def detach(self, sess: Session) -> None:
+        self._on_loop(self._stop, sess)
+
+    def _stop(self, sess: Session) -> None:
         t = self._tasks.pop(sess.sid, None)
         if t is not None:
             t.cancel()
