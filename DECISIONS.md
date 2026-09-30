@@ -23,7 +23,7 @@ latency and motion blur were its main failure.
 logs; Android has `org.json` built in and Python parses it natively.
 **Rejected.** Protobuf/CBOR/custom binary: smaller but needs schemas and tooling on both sides for no
 measurable gain at this rate. TCP/WebSocket for frames: head-of-line blocking turns one lost packet into
-delay for every later pose.
+delay for every later pose (TCP is used only where UDP cannot go: the `wired_adb` fallback, D33).
 
 ### D3 — Server-initiated NTP-style clock sync on the frames socket
 **Decision.** The server sends `sync` to the address frames come from; the phone replies with `t2`/`t3`.
@@ -46,7 +46,8 @@ guaranteed to match `elapsedRealtimeNanos()`, and every pose age would be silent
 **Decision.** The server broadcasts a beacon every second to the directed broadcast address of every
 IPv4 interface (PROTOCOL.md §4.1). Manual host entry in the app is the fallback.
 **Why.** No IP typing (brief 4.1); works over USB tethering and WiFi. Windows sends `255.255.255.255`
-out of only one interface, so a plain limited broadcast can miss the tether.
+out of only one interface, so a plain limited broadcast can miss the tether. In the `wired_adb` fallback
+there is no broadcast path, so the phone probes `127.0.0.1` through `adb reverse` instead (D33).
 **Rejected.** mDNS/NSD: needs an extra responder on Windows and is often blocked by the firewall;
 typing an IP.
 
@@ -177,15 +178,17 @@ access-code login (ported from DUO-WARE 1 `control/auth.py`). Mutating requests 
 **Why.** Brief 4.2 safety: local-only by default, reject cross-site POSTs, E-stop always reachable.
 **Rejected.** Binding 127.0.0.1 (phones could not connect); no protection until M8.
 
-### D18 — Android: Kotlin, plain Views, CameraX + Camera2 interop, OpenCV from Maven Central
+### D18 — Android build toolchain and UI
 **Decision.** Kotlin, `minSdk 29`, `compileSdk`/`targetSdk 36`, AGP 8.13 + Gradle 8.13, built with
 Android Studio's bundled JDK 21 (`JAVA_HOME`). The system `java` on this laptop is Java 26, which Gradle
-8.13 cannot run on. UI is plain Views (a status screen); no Compose. CameraX `ImageAnalysis`
-(`STRATEGY_KEEP_ONLY_LATEST`, Y plane) with Camera2 interop for manual exposure/ISO/focus; OpenCV
-`ArucoDetector` from Maven Central (M2).
+8.13 cannot run on. UI is plain Views (a status screen); no Compose. From M2 the app also has a C++ part
+(NDK + CMake, D31).
 **Why.** Brief 4.1. The screen is a status display; Compose would add build time and dependencies for
 nothing. Versions verified by building the M0 skeleton on 2026-10-01.
-**Rejected.** Compose; the NDK with OpenCV C++ (only if detection time in M2 demands it).
+**Rejected.** Compose.
+**Partly superseded (2026-10-01):** the first version chose CameraX `ImageAnalysis` with Camera2 interop and
+the OpenCV Java API, with C++ only if needed. Replaced by D30 (Camera2 directly) and D31 (C++ detection loop)
+after the owner's sustained-performance requirement.
 
 ### D19 — Milestone order: phone app (M2) before the car link (M3)
 **Decision.** Swapped from the brief (approved by the owner 2026-10-01).
@@ -278,3 +281,102 @@ bubble (camera distance between cars) applies whatever the reservations say. Eve
 manual "go to" move is a single edge between row/column neighbours; tests assert it.
 **Why.** Brief 4.6; DUO-WARE 1's checkpoint reservation and deadlock handling (`fleet/warehouse/manager.py`)
 map directly onto nodes and edges.
+
+### D30 — Camera2 directly, one YUV `ImageReader` stream, manual exposure and frame duration
+**Decision.** The app drives Camera2 itself (the owner's requirement of 2026-10-01 allowed Camera2 or CameraX
+with full interop). While tracking, the capture session has **one** stream: an `ImageReader`
+(`YUV_420_888`, `maxImages` 3) at the chosen size. AE is off; `SENSOR_EXPOSURE_TIME`, `SENSOR_SENSITIVITY`
+and `SENSOR_FRAME_DURATION = 1e9 / fps` are set directly (fps 0 → `getOutputMinFrameDuration` for that
+size, the sensor's maximum). Autofocus and AWB run once, then lock. The camera callback thread only hands the
+`Image` to the detection thread, and the image is closed as soon as detection is done. On-screen aiming in
+`setup` mode uses a second, small surface that is removed for `tracking`. The dashboard preview is made from
+the Y plane (greyscale), so it needs no extra stream. Capabilities (hardware level, capability list, fps
+ranges, YUV sizes with their maximum fps, exposure/ISO ranges, timestamp source, intrinsics) go to the server
+in `hello` (PROTOCOL.md §4.3).
+**Why.** The highest frame rate through an `ImageReader` is set by the minimum frame duration of that single
+stream; every extra stream (CameraX adds preview/analysis use cases and its own buffering) can lower it on
+`LIMITED`/`FULL` devices. With AE off, `SENSOR_FRAME_DURATION` sets the rate exactly. Direct Camera2 also
+controls buffer counts, callback threads and stream sizes, with no library conversions in between. The app is
+a single-purpose sensor, so CameraX's lifecycle conveniences are worth little here.
+**Rejected.** CameraX `ImageAnalysis` with Camera2 interop (less control over streams, frame duration and
+buffering; resolution selection can differ per device). Constrained high-speed sessions (120/240 fps): they
+accept only preview/video surfaces, not an `ImageReader`.
+**Unknown until M2:** the realme 9 Pro+'s hardware level, `MANUAL_SENSOR` support and maximum YUV fps. Without
+`MANUAL_SENSOR` the app locks AE at the lowest exposure compensation and reports that.
+
+### D31 — Detection in C++ (NDK + OpenCV), one JNI call per frame, no per-frame allocation
+**Decision.** The per-frame work (ROI prediction, window detection, full scans, corner refinement, packing the
+result) is a C++ library. Kotlin passes the Y plane's **direct** `ByteBuffer` and its row stride in one JNI call
+per frame; C++ wraps it in a `cv::Mat` header without copying and writes results into a preallocated direct
+result buffer. All working memory (window headers, detector objects, result arrays) is allocated once and
+reused. OpenCV comes from the Maven Central `org.opencv:opencv` AAR through Prefab (fallback: the OpenCV
+Android SDK zip referenced from CMake). A Java-API pipeline (`java_full`) is kept only as the benchmark
+baseline, so the JNI and allocation overhead is **measured** (PROTOCOL.md §4.7), as the owner asked.
+**Why.** ROI tracking turns one detection per frame into several small ones. Through the Java API each call
+allocates `Mat`/`List` objects and crosses JNI; at 60 fps for hours that means GC pauses and overhead that grow
+with the number of windows. One native call per frame keeps the hot path allocation-free and makes thread
+placement and timing controllable.
+**Rejected.** Kotlin/Java OpenCV as the production path (kept as the baseline); a custom ArUco decoder (OpenCV's
+is well tested; revisit only if benchmarks show detection itself is the limit).
+
+### D32 — Region-of-interest tracking with periodic full scans
+**Decision.** Every frame the phone searches small windows around the predicted positions of the tags in
+`settings.tracking.track_ids` (the server's car tags) and of any tag seen moving between full scans. A
+full-frame scan runs every `full_scan_every` frames and on the frame after a tracked tag is lost. Prediction is
+constant velocity from the last two detections, to the new frame's capture time. Windows are processed in
+parallel on the fastest cores. Each frame says what was searched (`scan`, `searched`), and the server treats a
+tag as "not seen" only where the phone looked (PROTOCOL.md §2). Floor-tag work uses full frames only.
+**Why.** Car tags are the only ones that move quickly; floor tags only need checking a few times a second. A
+few 128 px windows cost a fraction of a full 1280 × 720 scan, which is what makes the sensor's maximum frame
+rate reachable. Sending the search scope keeps the server honest about absence.
+**Rejected.** A full scan every frame (caps fps at the full-scan time; kept as `native_full` for benchmarks);
+the phone learning roles (roles stay server-side, D8; `track_ids` is only a hint list).
+
+### D33 — Connection modes: WIRED (USB tethering, adb-reverse TCP fallback) and WIRELESS (Wi-Fi)
+**Decision.** (Owner requirement, 2026-10-01.) Three modes, one protocol (PROTOCOL.md §4.1): `wired_tether`
+(UDP over the USB tethering network), `wired_adb` (`adb reverse` carries only TCP, so frames and sync use the
+length-prefixed TCP framing of §2.1), and `wireless` (UDP over Wi-Fi: router, laptop hotspot or phone
+hotspot). Discovery uses the beacon on the chosen interface for tether and Wi-Fi, and an HTTP probe of
+`127.0.0.1` for adb. The server listens on all interfaces and runs `adb reverse` itself. The phone binds its
+sockets to the chosen network and holds a low-latency Wi-Fi lock in `wireless`. The server **measures** each
+link: one-way latency from `sent_ns` through clock sync, RFC 3550 jitter, and loss from `seq` gaps. The phone
+reports the interface and Wi-Fi details. A mode switch is a new session, and the stale-pose watchdog stops the
+cars until fresh, synced poses arrive.
+**Why.** USB tethering gives the lowest jitter and charges the phone, but not every phone/laptop pair offers it;
+`adb reverse` works wherever USB debugging does. Wi-Fi gives freedom of placement at venues. Measuring the link
+makes a bad venue network visible before a demo.
+**Rejected.** A TCP-only protocol (head-of-line blocking on Wi-Fi); UDP over adb (not supported); letting the OS
+pick the route (mobile data or the wrong interface could carry frames).
+
+### D34 — Sustained performance: Android features and a thermal ladder
+**Decision.** Tracking runs in a **foreground service** (type `camera`) holding a partial wake lock. The
+activity keeps the screen on, with a dim, dark "demo" screen to cut heat.
+`Window.setSustainedPerformanceMode(true)` is used where
+`PowerManager.isSustainedPerformanceModeSupported()`. An ADPF **performance hint session** (API 31+) covers the
+detection threads, with the frame interval as the target and each frame's work time reported. The app asks for
+the battery-optimisation exemption and shows vendor-specific steps (realme "App battery management") when it
+cannot be granted. **Thermal ladder:** from `getThermalHeadroom(forecast_s)` (API 30+) and the thermal-status
+listener, step down one level at a time *before* Android throttles: fps first (100% → 75% → 50%), then
+resolution steps with the same aspect ratio. Step back up slowly, with hysteresis. Levels, reasons and headroom
+are reported to the dashboard. Resolution steps change `w`/`h`; the server rescales the camera's fit by the
+pixel ratio and re-checks it against the floor tags before trusting it (same aspect ratio normally means the
+same field of view; the check catches devices where it does not).
+**Why.** The requirement is a multi-hour demo, not a peak. A phone that overheats throttles hard and
+unpredictably, which is worse for control than a planned, lower, steady frame rate. Lowering fps keeps the
+geometry unchanged, so it comes first.
+**Rejected.** Fixed maximum settings (throttles after minutes); dropping resolution first (forces a fit check).
+
+### D35 — A new phone session starts unsynced; calibration belongs to the camera
+**Decision.** Each session (first connection, reconnection, mode switch) starts `UNSYNCED` with an empty
+clock-sync estimator. The camera's floor calibration and statistics history are kept per `cam` across sessions.
+**Why.** A different path (tether, Wi-Fi, adb) has different delays, so old sync samples are wrong for it;
+starting unsynced makes the stale-pose watchdog stop the cars until the new path is measured. The camera has not
+moved, so throwing its fit away would only add a pointless recalibration; the continuous floor-tag check still
+catches a bumped phone.
+
+### D36 — Benchmark and setup modes never feed control
+**Decision.** In `app_mode` `benchmark` or `setup` the phone keeps sending frames (for statistics and the map),
+but the server gives no poses for control, so the cars stop. Benchmark results (PROTOCOL.md §4.7) are stored
+per camera and shown on the dashboard.
+**Why.** A benchmark changes resolution, fps and pipeline every few seconds; driving on those poses would be
+unsafe and would pollute the controller's learning.

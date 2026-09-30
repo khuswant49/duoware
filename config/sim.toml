@@ -8,7 +8,7 @@
 # Values marked "fitted" were fitted to DUO-WARE 1 recordings; "guess" values wait for M4 hardware data.
 
 [server]
-# The simulated phone first listens for the server's discovery beacon (PROTOCOL.md §4.1) for
+# The simulated phone first listens for the server's discovery beacon (PROTOCOL.md §4.2) for
 # discovery_wait_s; without a beacon (or with discovery = false) it uses host and the ports below.
 discovery = true
 discovery_wait_s = 3
@@ -47,8 +47,8 @@ yaw_deg = 1.0                   # rotation of the image about the vertical axis 
 resolution = [1280, 720]
 hfov_deg = 70                   # horizontal field of view (guess; realme 9 Pro+ main camera not measured)
 lens_k1 = -0.03                 # barrel distortion; NOT measured (DUO-WARE 1 used -0.05 as a stand-in)
-fps = 30
-timestamp_clock = "boottime"    # what the simulated phone reports in hello (PROTOCOL.md §4.2)
+fps = 30                        # the simulated sensor's maximum at this resolution (reported in hello yuv_sizes)
+timestamp_clock = "boottime"    # what the simulated phone reports in status (PROTOCOL.md §3.1, §4.5)
 
 [phone_model]
 # How a real phone's detector behaves, applied to the exact projected corners.
@@ -58,7 +58,11 @@ corner_noise_px = 0.07          # still-tag corner jitter sd (fitted: DUO-WARE 1
 blur_ok_px = 4.0                # always detected below this
 blur_half_px = 7.0              # 50% detected here (linear between points)
 blur_zero_px = 12.0             # never detected above this
-exposure_ms = 3.0
+exposure_ms = 3.0               # initial value; the server's settings message replaces it
+link_mode = "wired_tether"      # reported in hello/status; M1 always sends UDP (wired_adb/TCP arrives in M2)
+# ROI emulation: the sim follows settings.tracking (track_ids, full_scan_every) and marks frames
+# "full" or "roi" like the real app, so the server's handling of roi frames is tested.
+# Values the sim does not model (CPU load, thermal headroom) are reported as null, never invented.
 pipeline_ms = [45, 15]          # capture -> frame available to the app: mean, +- uniform (guess, measure in M2)
 detect_ms = [15, 5]             # detection time: mean, +- uniform (guess)
 clock_offset_s = 12345.678      # phone clock minus server clock (arbitrary; sync must find it)

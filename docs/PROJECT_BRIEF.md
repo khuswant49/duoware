@@ -21,6 +21,8 @@ motion blur of that path is the main reason for this rebuild.
 | Topic | Decision |
 | --- | --- |
 | Tracking | A **custom Android app** detects ArUco markers **on the phone** and sends marker data over UDP. No video on the tracking path. |
+| Phone link | Two modes chosen in the app, same protocol (added 2026-10-01): **WIRED** (USB tethering; adb-reverse TCP fallback) and **WIRELESS** (Wi-Fi: router, laptop hotspot or phone hotspot). See 4.1. |
+| Phone performance | Maximum **sustained** tracking performance for multi-hour demos, not a peak (added 2026-10-01). See 4.1. |
 | Cameras | **One** overhead phone now. Design so more phones can be added later (every packet carries a camera ID). |
 | Car A | **ESP32**, Bluetooth Classic SPP (`BluetoothSerial`). |
 | Car B | **Arduino Uno clone** (CH340 USB chip) + **HC-05** Bluetooth module. |
@@ -76,8 +78,9 @@ Android phone app                   Laptop server (Python, asyncio)             
 ```
 
 ### 4.1 Phone app = a fast marker sensor, nothing more
-- Kotlin, CameraX `ImageAnalysis` with `STRATEGY_KEEP_ONLY_LATEST`; read the **Y (gray) plane directly**;
-  never JPEG-encode on the tracking path. OpenCV Android (`org.opencv` from Maven Central) `ArucoDetector`.
+- Kotlin app; the camera and detection pipeline follow the performance requirements below (the
+  architect chose Camera2 directly and a C++ detection loop: DECISIONS.md D30, D31). Read the
+  **Y (gray) plane directly**; never JPEG-encode on the tracking path. OpenCV `ArucoDetector`.
 - **Exposure control is the key feature**: via Camera2 interop set a short exposure (start ~2–4 ms,
   configurable), raise ISO, lock focus and white balance. Motion blur was the measured limit in DUO-WARE 1
   (clean car-tag reads: 100% below 150 px/s, 70–76% at 150–300 px/s, 15–44% above 300 px/s).
@@ -95,8 +98,30 @@ Android phone app                   Laptop server (Python, asyncio)             
   slow the tracking path.
 - On-screen: fps, detection ms, markers seen, exposure/ISO, link state. Keep the screen on; warn on
   thermal throttling.
-- Network: **USB tethering** (phone ↔ laptop) preferred — lowest jitter and keeps the phone charged.
-  Fallback: same WiFi router. The cars are on Bluetooth, so WiFi band doesn't matter for them.
+- **Connection modes** (owner requirement, 2026-10-01), chosen in the app, both using the same protocol:
+  - **WIRED:** USB tethering (the phone shares a network over the USB cable; UDP works unchanged and the
+    phone charges). If tethering isn't available, fall back to `adb reverse` over TCP (framing defined in
+    `PROTOCOL.md`).
+  - **WIRELESS:** Wi-Fi: same router, laptop hotspot or phone hotspot. 5 GHz is fine (the cars use Bluetooth).
+  - The server listens on all interfaces; discovery works in both modes; the dashboard shows the active mode
+    with its measured latency, jitter and packet loss. If the link drops or the mode is switched, the
+    stale-pose watchdog stops the cars until fresh poses arrive again.
+- **Sustained maximum performance** (owner requirement, 2026-10-01), for a multi-hour demo, not a peak:
+  - Camera2 directly (or CameraX with full Camera2 interop; architect's choice with reasons): the highest
+    frame rate the sensor supports through an `ImageReader` at the chosen resolution, manual short
+    exposure/ISO, locked focus and white balance. The camera's capabilities (hardware level, fps ranges,
+    resolutions) are reported to the server at startup.
+  - Zero-copy: read the Y plane directly, reuse buffers, no per-frame allocations; run the detection loop in
+    C++ (NDK + OpenCV) if the JNI overhead measures significant.
+  - Region-of-interest tracking: every frame, detect car tags only in small windows around their predicted
+    positions; a full-frame scan every N frames (and whenever a car is lost) finds new or moved tags. Spread
+    the work over the CPU's cores.
+  - Android performance features: foreground service, wake lock, keep screen on, sustained performance mode
+    where supported, performance hints (API 31+), and ask the user to exclude the app from battery optimisation.
+  - Thermal management: watch thermal status and headroom and scale down gracefully (fps or resolution)
+    before the phone throttles on its own; report it to the dashboard.
+  - The app shows per-stage timings (capture, detect, send), fps, CPU load and thermal status, and has a
+    benchmark mode to compare settings.
 
 ### 4.2 Server
 - Python 3.13, `asyncio`. Recommended: **FastAPI + uvicorn** (REST + native WebSockets), an asyncio UDP
@@ -177,8 +202,8 @@ Leave room in the capability string for a future gyro/encoder, even though none 
 ### 4.4 Dashboard (recommended: React + Vite + TypeScript)
 - Live floor map: grid, blocked cells, stations, both cars (pose, heading, pose age), planned paths,
   reserved cells, safety bubble.
-- **Connect cars** (one button) with per-car link state; phone status (fps, detection ms, pose age,
-  calibration state) and the low-rate preview.
+- **Connect cars** (one button) with per-car link state; phone status (fps, per-stage timings, pose age,
+  calibration state, connection mode with latency/jitter/loss, thermal level) and the low-rate preview.
 - STOP ALL / RESUME, per-car stop, manual drive per car, task creation and queue, mode switch.
 - Event timeline per car with filters and the **Why?** panel (facts, rule reason, AI explanation and audit
   verdict, flags).
@@ -254,8 +279,11 @@ Leave room in the capability string for a future gyro/encoder, even though none 
 ## 5. Latency — measure, don't assume
 
 Build measurement in from the first milestone:
-- Phone: capture → packet sent (on-device), fps, detection ms.
-- Server: capture → received (via clock sync), pose age distribution p50/p95/max, dropped packets.
+- Phone: capture → packet sent (on-device) and per stage (capture pipeline, detection, send), fps, CPU load,
+  thermal status/headroom.
+- Server: capture → received (via clock sync), pose age distribution p50/p95/max, dropped packets; per
+  connection mode: network latency, jitter and packet loss.
+- Sustained: fps, pose age and thermal level over a multi-hour run, not just the first minutes.
 - **Loop latency step test:** command a car to start spinning from rest; time until the camera reports the
   heading changing. This is the number the controller must plan around.
 - Targets to measure against (not claims): pose age at the server p50 < 50 ms, p95 < 80 ms; tracking

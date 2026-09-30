@@ -15,6 +15,18 @@ frames_port = 47801
 beacon_port = 47800
 beacon_interval_s = 1.0
 
+[tcp]
+# Phone -> server marker frames over TCP (PROTOCOL.md §2.1), used in connection mode wired_adb, where
+# `adb reverse` forwards the phone's 127.0.0.1:<port> to this laptop. UDP cannot cross adb reverse.
+frames_port = 47802
+
+[wired]
+# Run `adb reverse` for the HTTP port and tcp.frames_port on every attached Android device, so the
+# wired_adb fallback needs no manual command (PROTOCOL.md §4.1). A missing adb is logged once, not an error.
+adb_reverse = true
+adb_path = ""                   # empty = "adb" on PATH, else %LOCALAPPDATA%/Android/Sdk/platform-tools/adb.exe
+adb_poll_s = 5
+
 [storage]
 # Relative to the repository root. Git-ignored. Holds state.db (tag registry, presets, pairings,
 # learned calibration) and events.db (event log). Delete events.db freely; state.db is precious.

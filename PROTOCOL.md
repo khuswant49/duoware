@@ -6,9 +6,9 @@ see [§9](#9-changing-this-protocol).
 
 | § | Link | Transport |
 | --- | --- | --- |
-| [2](#2-marker-frames-phone--server-udp) | Marker frames, phone → server | UDP, `frames_port` 47801 |
-| [3](#3-clock-sync-server--phone-udp) | Clock sync, server ↔ phone | UDP, same socket as frames |
-| [4](#4-discovery-and-the-phone-websocket) | Discovery beacon; phone session, settings, status, preview | UDP broadcast 47800; WebSocket `/ws/phone` |
+| [2](#2-marker-frames-phone--server) | Marker frames, phone → server | UDP `frames_port` 47801, or TCP `frames_tcp_port` 47802 over `adb reverse` |
+| [3](#3-clock-sync-server--phone) | Clock sync, server ↔ phone | same transport as the frames |
+| [4](#4-connection-modes-discovery-and-the-phone-websocket) | Connection modes; discovery beacon; phone session, settings, status, preview, benchmarks | UDP broadcast 47800; WebSocket `/ws/phone` |
 | [5](#5-car-line-protocol) | Car commands and replies | Bluetooth SPP (RFCOMM) / serial / TCP (simulator only) |
 | [6](#6-dashboard-websocket-server--dashboard) | Live state to the dashboard | WebSocket `/ws/dashboard` |
 | [7](#7-rest-api) | Dashboard commands, tag registry, road-network layout, venue presets, cameras, events | HTTP `/api/*` |
@@ -59,9 +59,11 @@ Ports are set in `config/server.toml`; the numbers above are the defaults.
 
 ---
 
-## 2. Marker frames (phone → server, UDP)
+## 2. Marker frames (phone → server)
 
-One datagram per analysed camera frame, sent to `<server host>:<frames_port>` from `welcome` (§4.2).
+One message per analysed camera frame. The transport depends on the connection mode (§4.1): one **UDP
+datagram** to `<server host>:<frames_port>` (modes `wired_tether`, `wireless`), or one length-prefixed
+message on the session's **TCP connection** (§2.1, mode `wired_adb`). The JSON is identical.
 **A frame with no markers is still sent** (`"m": []`), so the server can tell "nothing seen" from
 "no frames".
 
@@ -69,9 +71,9 @@ One datagram per analysed camera frame, sent to `<server host>:<frames_port>` fr
 {"v":1,"t":"frame","cam":1,"sid":"9f2c4e1a7b3d5c60","seq":48213,
  "cap_ns":81234567890123,"exp_ns":3000000,"skew_ns":18500000,
  "avail_ns":81234612890123,"sent_ns":81234629890123,
- "w":1280,"h":720,
+ "w":1280,"h":720,"scan":"roi","searched":[1,5],
  "m":[[1,612.4,300.1,660.2,301.0,659.5,348.7,611.8,347.9],
-      [10,100.2,80.5,146.0,80.9,145.7,126.6,99.8,126.1]]}
+      [5,900.2,410.5,946.0,410.9,945.7,456.6,899.8,456.1]]}
 ```
 
 | Field | Type | Meaning |
@@ -79,45 +81,74 @@ One datagram per analysed camera frame, sent to `<server host>:<frames_port>` fr
 | `v`, `t` | int, `"frame"` | version, message type |
 | `cam` | int | camera ID from `welcome` |
 | `sid` | string | session ID from `welcome`; frames with an unknown `sid` are rejected |
-| `seq` | uint32 | +1 per analysed frame in this session, starting at 0 |
+| `seq` | uint32 | +1 per analysed frame in this session, starting at 0. A frame the phone drops before sending still uses up its `seq`. |
 | `cap_ns` | int64 | sensor timestamp: start of exposure of the **first row**, sync clock |
 | `exp_ns` | int64 | exposure time actually used for this frame |
 | `skew_ns` | int64 | rolling-shutter skew (first-row to last-row start); `0` if the phone does not report it |
-| `avail_ns` | int64 | sync clock when the image reached the analyzer |
-| `sent_ns` | int64 | sync clock just before the datagram was sent |
+| `avail_ns` | int64 | sync clock when the image reached the app (`ImageReader` callback) |
+| `sent_ns` | int64 | sync clock just before the message was handed to the socket |
 | `w`, `h` | int | analysed buffer size in px |
+| `scan` | string | `"full"`: the whole image was searched, so every detectable tag is in `m`. `"roi"`: only windows around the tags in `searched` were searched (DECISIONS.md D32). |
+| `searched` | int array | `roi` frames: the tag IDs whose windows were searched. `full` frames: `[]`. |
 | `m` | array | one entry per detected marker: `[id, x0, y0, x1, y1, x2, y2, x3, y3]`, corners in px (§0 order), rounded to 0.1 px; raw (no lens correction on the phone) |
 
 **Per-marker capture time** (computed by the server): `cap_ns + exp_ns / 2 + skew_ns × (cy / h)`,
 where `cy` is the mean y of the marker's corners. It is converted to server time with §3.
 
-**Rate:** every analysed frame (target `tuning.camera.fps`, 30 Hz). No retransmission, no batching.
-**Size:** aim for ≤ 1400 bytes; hard maximum 8192 bytes; never split across datagrams.
+**Resolution changes** (thermal ladder or new settings) show up as new `w`, `h`. The server rescales the
+camera's floor fit by the pixel ratio and re-checks it against the visible floor tags before using it
+(DECISIONS.md D34); until the check passes, that camera gives no poses for control.
 
-**Phone rules.** The camera thread never waits on the network: it hands the packet to a sender with a
-queue of depth 1 (newest wins). Send errors are counted, not retried.
+**Absence means "not seen" only where the phone looked.** A tag missing from a `roi` frame counts as
+not seen only if its ID is in `searched`; otherwise its last observation stands and ages normally.
+Floor-tag work (calibration fits and drift checks, auto-location, node-moved detection) uses `full`
+frames only. Car poses use both kinds.
+
+**Rate:** every analysed frame (target: `settings.fps`, §4.4). No retransmission, no batching.
+**Size:** aim for ≤ 1400 bytes; hard maximum 8192 bytes; never split.
+
+**Phone rules.** The camera and detection threads never wait on the network: they hand the message to a
+sender with a queue of depth 1 (newest wins). A message that cannot be sent at once is dropped and counted
+(`send_dropped`, §4.5), never retried or queued.
 
 **Server rules (error handling).** Every rejection is counted per camera (`rx_*` counters in §6.2)
 and logged at most once per minute per cause.
 
 | Condition | Action | Counter |
 | --- | --- | --- |
-| Not JSON, missing field, wrong type | drop datagram | `rx_bad` |
+| Not JSON, missing field, wrong type | drop the message | `rx_bad` |
 | `v` ≠ 1 | drop; camera shows "protocol mismatch" | `rx_version` |
 | `sid` not a live session, or source IP ≠ that session's WebSocket peer IP | drop | `rx_unauth` |
 | `seq` ≤ last accepted `seq` of the session | drop (late or duplicate) | `rx_late` |
 | `seq` jumps by *k* > 1 | accept; `dropped += k − 1` | `dropped` |
 | Marker ID outside the dictionary, or a corner non-finite or outside [−w, 2w] × [−h, 2h] | ignore that marker only | `rx_bad_marker` |
-| Camera `UNSYNCED` (§3.3) | accept for statistics; produce **no** floor poses | — |
+| Camera `UNSYNCED` (§3.3), or the phone's `app_mode` ≠ `tracking` (§4.5) | accept for statistics; produce **no** poses for control | — |
 | Computed pose age > `tuning.pose.stale_ms` | accept for statistics; the pose is stale (cars stop) | — |
+
+### 2.1 TCP framing (mode `wired_adb`)
+`adb reverse` forwards TCP only, so in this mode frames and sync travel on one TCP connection per session.
+
+- The phone connects to `127.0.0.1:<frames_tcp_port>` (from `welcome`) after `welcome`; `adb reverse`
+  carries it to the laptop. Both ends set `TCP_NODELAY`.
+- **Message = 4-byte unsigned big-endian length `N` (1…8192), then `N` bytes of UTF-8 JSON**: exactly one §2
+  or §3 message. Both directions use it (the server sends `sync` on the same connection).
+- The first message must be a `frame` or `sync_r` of a live session, within 5 s of connecting; otherwise
+  the server closes the connection. A new connection for the same `sid` replaces the old one.
+- `N` = 0, `N` > 8192 or bad JSON: the server counts `rx_bad` and closes the connection (a byte stream
+  cannot be resynchronised). The phone reconnects after 1 s while its WebSocket session is live.
+- The server closes the TCP connection when the session ends.
+- Phone send: small send buffer (16 KB). A new message is written only when the previous one is fully
+  written; otherwise the new one is dropped (`send_dropped`). Never queue old frames behind a slow link.
+- The source-IP rule of §2 applies to the TCP peer (under `adb reverse` both the WebSocket and the TCP
+  connection come from `127.0.0.1`).
 
 ---
 
-## 3. Clock sync (server ↔ phone, UDP)
+## 3. Clock sync (server ↔ phone)
 
 ### 3.1 The phone's sync clock
 The sync clock is the clock of the camera's sensor timestamps. The app decides it once the camera
-runs, and reports it in `status.clock` (§4.4):
+runs, and reports it in `status.clock` (§4.5):
 
 1. `SENSOR_INFO_TIMESTAMP_SOURCE == REALTIME` → `SystemClock.elapsedRealtimeNanos()` → `"boottime"`.
 2. Otherwise, on the first frame: if `elapsedRealtimeNanos() − cap_ns` is in [0, 1 s] → `"boottime"`;
@@ -127,8 +158,9 @@ The same clock stamps `avail_ns`, `sent_ns`, `t2` and `t3`. With `"unknown"` the
 camera `UNSYNCED` (reason "timestamp clock unknown") and it produces no poses.
 
 ### 3.2 Exchange
-The server sends to the source address (IP and port) of the session's latest frame; the phone answers
-**from the socket that sends its frames**, immediately.
+Over the session's frames transport: UDP — the server sends to the source address (IP and port) of the
+session's latest frame, and the phone answers **from the socket that sends its frames**; TCP — both ways
+on the session's connection (§2.1). The phone answers immediately.
 
 ```json
 {"v":1,"t":"sync","sid":"9f2c4e1a7b3d5c60","n":123,"t1":5512345678901}
@@ -157,32 +189,67 @@ session, then every `interval_ms` (500 ms).
 - `server_time = phone_time − θ(now)`. Pose age = `now − server_time(marker capture time)`.
 - The camera is **`SYNCED`** while an accepted sample is younger than `unsynced_after_s`, otherwise
   **`UNSYNCED`**. Reported as `sync.ok`, `sync.rtt_ms` (lowest in the window) and `sync.samples`.
+- Every new session starts `UNSYNCED` with an empty estimator (DECISIONS.md D35).
 
 ---
 
-## 4. Discovery and the phone WebSocket
+## 4. Connection modes, discovery and the phone WebSocket
 
-### 4.1 Discovery beacon (server → broadcast, UDP)
+### 4.1 Connection modes
+The user picks **WIRED** or **WIRELESS** in the app. All three resulting modes use the same messages;
+only the frames transport and the discovery differ (DECISIONS.md D33).
+
+| `link.mode` | What connects phone and laptop | Frames and sync | How the phone finds the server |
+| --- | --- | --- | --- |
+| `wired_tether` | USB tethering: the phone shares a network over the USB cable (and charges) | UDP (§2) | beacon (§4.2) received on the tether interface (`rndis*`, `usb*`, `ncm*`) |
+| `wired_adb` | USB cable with `adb reverse` mapping the phone's `127.0.0.1:<http_port>` and `127.0.0.1:<frames_tcp_port>` to the laptop | TCP (§2.1) | probe `GET http://127.0.0.1:<http_port>/api/beacon` |
+| `wireless` | Wi-Fi: same router, laptop hotspot or phone hotspot (2.4 or 5 GHz) | UDP (§2) | beacon received on the Wi-Fi interface (`wlan*`, `ap*`, `swlan*`, `softap*`) |
+
+- **WIRED** tries `wired_tether` first (listen for a beacon for 3 s), then `wired_adb` (probe), and repeats
+  every 5 s until one works. **WIRELESS** uses `wireless` only.
+- The phone accepts only beacons whose `host` is on the subnet of the chosen interface, and binds its
+  sockets to that interface or network (Wi-Fi: the Wi-Fi `Network`; tether: the tether interface address;
+  adb: loopback), so traffic never leaks onto another path (for example mobile data).
+- In `wireless` mode the app holds a low-latency Wi-Fi lock (`WIFI_MODE_FULL_LOW_LATENCY`) to keep Wi-Fi
+  power saving from adding jitter.
+- **Server:** listens on all interfaces: HTTP/WebSocket on `http.host` (0.0.0.0), UDP frames on
+  `udp.frames_port`, TCP frames on `tcp.frames_port`. With `wired.adb_reverse = true` it runs
+  `adb reverse` for every attached device every `wired.adb_poll_s` (idempotent; a missing `adb` is logged once).
+- **Mode switch or dropped link:** the phone ends its session and opens a new one in the new mode. The new
+  session starts `UNSYNCED` (§3.3) and old poses age out, so the stale-pose watchdog stops the cars
+  (`stopped_reason` `unsynced` / `stale_pose`) until synced, fresh frames arrive again. The camera's
+  floor calibration belongs to `cam`, not to the session, so it survives the switch (the locked fit is
+  re-checked against the visible floor tags as usual).
+
+### 4.2 Discovery beacon (server → broadcast, UDP)
 Sent every `udp.beacon_interval_s` to port `udp.beacon_port` on the **directed broadcast address of
 every active IPv4 interface** (Windows sends `255.255.255.255` out of one interface only), with
-`host` set to that interface's own address.
+`host` set to that interface's own address. `GET /api/beacon` returns the same message, with `host`
+set to the address the request arrived on (used by `wired_adb`).
 
 ```json
-{"v":1,"t":"beacon","server_id":"a3f9c2d17e804b55","name":"DUO-WARE","host":"192.168.42.129","http_port":8000,"frames_port":47801}
+{"v":1,"t":"beacon","server_id":"a3f9c2d17e804b55","name":"DUO-WARE","host":"192.168.42.129","http_port":8000,"frames_port":47801,"frames_tcp_port":47802}
 ```
 
-The app connects to the first beacon whose `server_id` matches its stored pairing, else the first
-beacon it hears (preferring one received on the USB-tether interface). It ignores beacons with
-another `v` and shows "server speaks protocol vN". A manual host entry in the app is the fallback.
+Among acceptable beacons (§4.1) the app prefers one whose `server_id` matches its stored pairing. It
+ignores beacons with another `v` and shows "server speaks protocol vN". A manual host entry in the app
+is the last fallback.
 
-### 4.2 Session: `ws://<host>:<http_port>/ws/phone`
-Text frames carry JSON; one binary message type carries the preview (§4.5). The phone sends
+### 4.3 Session: `ws://<host>:<http_port>/ws/phone`
+Text frames carry JSON; one binary message type carries the preview (§4.6). The phone sends
 `hello` within 5 s of connecting, or the server closes with code 4000.
 
 ```json
 {"v":1,"t":"hello","device_id":"5b1e0f5e-8a8c-4f53-9b0e-2f4c1f2a6c11","token":null,"pair_code":"K7QX-M2",
- "app_version":"0.2.0","model":"realme RMX3393","android":"13",
- "camera":{"id":"0","hw_level":"FULL","manual_sensor":true,"ts_source":"REALTIME",
+ "app_version":"0.2.0","model":"realme RMX3393","android":"13","sdk":33,
+ "link":{"mode":"wireless","interface":"wlan0","local_ip":"192.168.1.23",
+         "wifi":{"band_ghz":5,"rssi_dbm":-51,"link_mbps":866}},
+ "cpu":{"cores":8,"max_khz":[2000000,2000000,2000000,2000000,2000000,2000000,2500000,2500000]},
+ "camera":{"id":"0","hw_level":"FULL","capabilities":["MANUAL_SENSOR","READ_SENSOR_SETTINGS","BURST_CAPTURE"],
+           "ts_source":"REALTIME","exposure_ns_range":[10000,500000000],"iso_range":[100,6400],
+           "fps_ranges":[[15,30],[30,30],[60,60]],
+           "yuv_sizes":[[1920,1080,30.0],[1280,720,60.0],[640,480,120.0]],
+           "rolling_shutter_skew":true,"min_focus_diopters":10.0,
            "intrinsics":[1402.1,1402.1,640.3,361.0,0.0],"distortion":[0.021,-0.043,0.0,0.0,0.0],
            "active_array":[4080,3072]}}
 ```
@@ -191,19 +258,30 @@ Text frames carry JSON; one binary message type carries the preview (§4.5). The
 | --- | --- |
 | `token` | 32 hex issued at an earlier pairing, or `null` |
 | `pair_code` | the code shown on the dashboard (only needed without a valid token), or `null` |
+| `sdk` | Android API level |
+| `link` | connection mode (§4.1), interface name, the phone's address on it, and for `wireless` the Wi-Fi band, RSSI and link speed (`wifi` is `null` otherwise) |
+| `cpu` | core count and each core's maximum frequency |
 | `camera.hw_level` | Camera2 hardware level: `LEGACY`, `LIMITED`, `FULL`, `LEVEL_3`, `EXTERNAL` |
-| `camera.manual_sensor` | the camera supports manual exposure/ISO |
+| `camera.capabilities` | Camera2 `REQUEST_AVAILABLE_CAPABILITIES` names |
 | `camera.ts_source` | `REALTIME` or `UNKNOWN` (Camera2 `SENSOR_INFO_TIMESTAMP_SOURCE`) |
+| `camera.exposure_ns_range`, `iso_range` | manual exposure and sensitivity ranges, or `null` without `MANUAL_SENSOR` |
+| `camera.fps_ranges` | `CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES` |
+| `camera.yuv_sizes` | every `YUV_420_888` output size as `[w, h, max_fps]`, where `max_fps = 1e9 / getOutputMinFrameDuration(YUV_420_888, size)` |
+| `camera.rolling_shutter_skew` | capture results report `SENSOR_ROLLING_SHUTTER_SKEW` |
 | `camera.intrinsics` | Camera2 `LENS_INTRINSIC_CALIBRATION` `[fx, fy, cx, cy, s]` in active-array px, or `null` |
 | `camera.distortion` | Camera2 `LENS_DISTORTION` `[k1, k2, k3, p1, p2]`, or `null` |
 
+The server stores the latest `hello` capabilities per camera (`GET /api/cameras`) and logs a `camera`
+event when `link.mode` differs from the camera's previous session.
+
 **Server decision.** A valid `token` for this `device_id` → accept. Otherwise a `pair_code` equal to
 the current code (normalised: upper-case, letters and digits only, constant-time compare) → issue a
-token, assign `cam`, accept. Otherwise → `error`. Five failures from one IP lock it out for 60 s.
+token, assign `cam`, accept. Otherwise → `error`. `access.pair_max_failures` failures from one IP lock it
+out for `access.pair_lock_s`.
 
 ```json
 {"v":1,"t":"welcome","cam":1,"sid":"9f2c4e1a7b3d5c60","token":"f0c1...32hex","frames_port":47801,
- "server_id":"a3f9c2d17e804b55","settings":{ ...as in §4.3... }}
+ "frames_tcp_port":47802,"server_id":"a3f9c2d17e804b55","settings":{ ...as in §4.4... }}
 {"v":1,"t":"error","code":"bad_pair_code","message":"Pairing code is wrong or expired."}
 ```
 
@@ -218,53 +296,108 @@ token, assign `cam`, accept. Otherwise → `error`. Five failures from one IP lo
 | `replaced` | 4004 | a newer session of the same device took over (sent to the old session) |
 
 **Session lifetime.** One live session per camera; a new accepted `hello` from the same device ends the
-old one immediately. When the WebSocket closes the session ends: its `sid` is invalid for UDP at
-once, and the camera is `OFFLINE`. The server sends WebSocket pings every 5 s and closes a session
-with no pong for 10 s. Tokens are revoked from the dashboard (`DELETE /api/pairing/{device_id}`).
+old one immediately. When the WebSocket closes the session ends: its `sid` is invalid at once (UDP and
+TCP), its TCP frames connection is closed, and the camera is `OFFLINE`. The server sends WebSocket pings
+every 5 s and closes a session with no pong for 10 s. Tokens are revoked from the dashboard
+(`DELETE /api/pairing/{device_id}`).
 
-### 4.3 `settings` (server → phone)
-In `welcome`, and again whenever the camera settings change. Values come from `config/tuning.toml [camera]`.
+### 4.4 `settings` (server → phone)
+In `welcome`, and again whenever a value changes (camera overrides, or the registry's car tags).
+Values come from `config/tuning.toml` `[camera]`, `[phone]`, `[phone.thermal]`, overridden by
+`PUT /api/camera-settings` / venue presets.
 
 ```json
-{"v":1,"t":"settings","resolution":[1280,720],"fps":30,"exposure_ns":3000000,"iso":800,"focus":"locked",
+{"v":1,"t":"settings","resolution":[1280,720],"fps":0,"exposure_ns":3000000,"iso":800,
+ "focus":"locked","awb":"locked",
+ "tracking":{"track_ids":[1,5],"full_scan_every":10,"roi_margin":1.5,"roi_min_px":64,"threads":0},
+ "thermal":{"forecast_s":10,"headroom_down":0.85,"headroom_up":0.65,"up_after_s":60,"status_down":2,
+            "fps_steps":[1.0,0.75,0.5],"resolution_steps":[[960,540]]},
  "preview":{"fps":3,"width":480,"quality":60}}
-```
-
-The phone applies them as closely as the camera allows (clamping to supported ranges) and reports
-what it achieved in `status`. `focus`: `"locked"` = autofocus once, then lock. `preview.fps` 0 = off.
-
-### 4.4 `status` (phone → server, 1 Hz)
-
-```json
-{"v":1,"t":"status","cam":1,"clock":"boottime","fps":29.8,
- "det_ms":{"p50":12.1,"p95":18.0},"cap_to_sent_ms":{"p50":61.0,"p95":74.2},
- "frames_skipped":3,"exposure_ns":3000000,"iso":800,"focus":"locked",
- "thermal":0,"battery_pct":81,"charging":true,"markers_seen":7}
 ```
 
 | Field | Meaning |
 | --- | --- |
+| `resolution` | analysis `ImageReader` size; must be one of `camera.yuv_sizes` (else the phone picks the closest size with the same aspect ratio and reports it) |
+| `fps` | target frame rate; `0` = the highest the sensor supports at `resolution` (`max_fps` from `yuv_sizes`) |
+| `exposure_ns`, `iso` | manual exposure (AE off). `SENSOR_FRAME_DURATION` is set to `1e9 / fps` |
+| `focus`, `awb` | `"locked"`: autofocus / auto white balance once, then lock |
+| `tracking.track_ids` | tag IDs to follow in windows every frame. The server sends the car tags from its registry; the phone still knows nothing about roles. The phone also tracks any tag that moved more than its own size between two full scans. |
+| `tracking.full_scan_every` | a full-frame scan at least every N frames, and on the next frame whenever a tracked tag is not found in its window |
+| `tracking.roi_margin`, `roi_min_px` | window = the tag's predicted bounding box grown on every side by `roi_margin` × its side length; at least `roi_min_px` square; clipped to the image |
+| `tracking.threads` | detection worker threads; `0` = number of cores in the fastest cluster |
+| `thermal.*` | thermal ladder (DECISIONS.md D34): level *k* < `len(fps_steps)` runs at `fps_steps[k]` × the base fps; higher levels step through `resolution_steps` (same aspect ratio as `resolution`) at the lowest fps step. Step **down** one level when `getThermalHeadroom(forecast_s)` ≥ `headroom_down` or thermal status ≥ `status_down`; step **up** one level after `up_after_s` with headroom < `headroom_up` and status < `status_down`. |
+| `preview` | dashboard preview: `fps` (0 = off), JPEG `width` and `quality` |
+
+The phone applies the settings as closely as the camera allows and reports what it achieved in `status`.
+
+### 4.5 `status` (phone → server, 1 Hz)
+
+```json
+{"v":1,"t":"status","cam":1,"app_mode":"tracking","clock":"boottime",
+ "link":{"mode":"wireless","interface":"wlan0","local_ip":"192.168.1.23",
+         "wifi":{"band_ghz":5,"rssi_dbm":-53,"link_mbps":780}},
+ "fps":59.7,"fps_target":60.0,"resolution":[1280,720],
+ "stages_ms":{"pipeline":{"p50":28.0,"p95":34.1},"detect_full":{"p50":14.2,"p95":17.9},
+              "detect_roi":{"p50":1.9,"p95":2.8},"send":{"p50":0.3,"p95":0.6},
+              "cap_to_sent":{"p50":33.5,"p95":41.0}},
+ "scan":{"full_every":10,"rois_per_frame":2.0,"lost_rescans":3},
+ "frames_skipped":3,"send_dropped":0,"exposure_ns":3000000,"iso":800,"focus":"locked",
+ "cpu":{"app_pct":23.5,"max_cur_khz":2400000},
+ "thermal":{"status":0,"headroom":0.42,"level":0,"reason":null},
+ "perf":{"foreground_service":true,"wake_lock":true,"wifi_low_latency":true,
+         "sustained_mode":false,"hint_session":true,"battery_opt_exempt":true},
+ "battery_pct":81,"charging":true,"markers_seen":7}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `app_mode` | `tracking`, `setup` (aiming/focusing) or `benchmark` (§4.7). Only `tracking` frames produce poses for control. |
 | `clock` | `boottime`, `monotonic` or `unknown` (§3.1) |
-| `fps` | analysed frames per second over the last second |
-| `det_ms`, `cap_to_sent_ms` | detection time and `sent_ns − cap_ns` over the last 10 s, p50/p95 |
-| `frames_skipped` | cumulative frames the analyzer dropped (`KEEP_ONLY_LATEST`) |
+| `link` | as in `hello`, refreshed (RSSI and link speed change) |
+| `fps`, `fps_target`, `resolution` | achieved and targeted frame rate over the last second (after thermal scaling), current resolution |
+| `stages_ms` | p50/p95 over the last 10 s: `pipeline` = `avail_ns − cap_ns` (sensor to app), `detect_full` / `detect_roi` = detection time on full / roi frames, `send` = detection end to `sent_ns`, `cap_to_sent` = `sent_ns − cap_ns` |
+| `scan` | full-scan interval in use, mean windows per roi frame, full scans forced by a lost tag (cumulative) |
+| `frames_skipped` | cumulative frames the `ImageReader` dropped because processing was busy |
+| `send_dropped` | cumulative messages dropped by the sender (§2) |
 | `focus` | `locked`, `searching` or `failed` |
-| `thermal` | `PowerManager.getCurrentThermalStatus()` 0 (none) … 6 (shutdown) |
+| `cpu` | `app_pct`: the app's CPU time ÷ wall time ÷ cores × 100; `max_cur_khz`: current frequency of the fastest core |
+| `thermal` | `status`: `PowerManager.getCurrentThermalStatus()` 0 (none) … 6 (shutdown); `headroom`: `getThermalHeadroom(forecast_s)` (API 30+); `level`: thermal ladder level (§4.4); `reason`: why the level is above 0 |
+| `perf` | which Android performance features are active (DECISIONS.md D34) |
 
-A status older than 5 s is shown as "status stale"; it does not stop cars by itself (frames and sync do).
+Any value the phone cannot measure is `null`, never estimated. A status older than 5 s is shown as
+"status stale"; it does not stop cars by itself (frames and sync do). The server logs a `camera` event
+when `link.mode`, `app_mode` or `thermal.level` changes, and a sample of the status every 60 s (for
+multi-hour runs).
 
-### 4.5 Preview (phone → server, binary WebSocket message)
+### 4.6 Preview (phone → server, binary WebSocket message)
 
 | Bytes | Content |
 | --- | --- |
 | 0–3 | ASCII `DWP1` |
 | 4–11 | `cap_ns`, uint64 big-endian |
 | 12–13, 14–15 | width, height, uint16 big-endian |
-| 16– | JPEG |
+| 16– | JPEG (greyscale, from the Y plane) |
 
-At most `preview.fps`, made from a downscaled copy **off the tracking thread**; skipped whenever the
+At most `preview.fps`, made from a downscaled copy **off the tracking threads**; skipped whenever the
 phone's send path is busy. The server keeps only the latest per camera and drops messages over 512 KB
 or with a bad header.
+
+### 4.7 `bench` (phone → server, after a benchmark run)
+Benchmark mode (started in the app) steps through combinations of resolution, fps, pipeline and
+full-scan interval, `duration_s` each, while tags are in view. During the run `status.app_mode` is
+`benchmark`, so the camera gives no poses for control and the cars stay stopped.
+
+```json
+{"v":1,"t":"bench","cam":1,"run_id":"20261001-140200",
+ "results":[{"resolution":[1280,720],"fps_target":0,"pipeline":"native_roi","full_scan_every":10,
+             "duration_s":30,"fps":59.6,"cap_to_sent_ms":{"p50":33.1,"p95":40.2},
+             "detect_full_ms":{"p50":14.0,"p95":17.5},"detect_roi_ms":{"p50":1.8,"p95":2.6},
+             "cpu_app_pct":22.0,"headroom_start":0.40,"headroom_end":0.47,"markers_seen":11}]}
+```
+
+`pipeline` ∈ `native_roi` (the default), `native_full` (full scan every frame), `java_full` (the
+OpenCV Java API on full frames: the JNI-overhead baseline, DECISIONS.md D31). The server stores runs per
+camera (`GET /api/cameras/{cam}/benchmarks`).
 
 ---
 
@@ -342,13 +475,20 @@ skipped for that client, never queued.
 {"v":1,"t":"state","seq":1042,"wall_ms":1790000000000,
  "system":{"estop":false,"estop_since_wall_ms":null,"estop_by":null,"mode":"sim",
            "registry_version":7,"layout_version":3,"events_last_id":1234},
- "cameras":[{"cam":1,"online":true,"model":"realme RMX3393",
+ "cameras":[{"cam":1,"online":true,"model":"realme RMX3393","app_mode":"tracking",
+   "link":{"mode":"wireless","transport":"udp","interface":"wlan0",
+           "wifi":{"band_ghz":5,"rssi_dbm":-53,"link_mbps":780},
+           "latency_ms":{"p50":3.1,"p95":7.9},"jitter_ms":1.2,"loss_pct":0.4,"send_dropped":0},
    "sync":{"ok":true,"rtt_ms":1.8,"samples":40},
    "calib":{"status":"OK","model":"homography","rms_mm":1.9,"residual_mm":2.2,
-            "anchors_used":[10,11,12,13],"anchors_seen":[10,11,12,13]},
-   "fps":29.8,"det_ms_p50":12.1,"cap_to_sent_ms_p50":61.0,
-   "pose_age_ms":{"p50":58.2,"p95":71.0,"max":95.4,"n":298},
-   "dropped":3,"rx_bad":0,"rx_unauth":0,"rx_late":0,"thermal":0,
+            "floor_tags_used":[10,2,11,3,6,4,12,7,13],"floor_tags_seen":[10,2,11,3,4,12,7,13]},
+   "fps":59.7,"fps_target":60.0,"resolution":[1280,720],
+   "stages_ms":{"pipeline":{"p50":28.0,"p95":34.1},"detect_full":{"p50":14.2,"p95":17.9},
+                "detect_roi":{"p50":1.9,"p95":2.8},"send":{"p50":0.3,"p95":0.6},
+                "cap_to_sent":{"p50":33.5,"p95":41.0}},
+   "pose_age_ms":{"p50":38.2,"p95":47.0,"max":65.4,"n":597},
+   "dropped":3,"rx_bad":0,"rx_unauth":0,"rx_late":0,
+   "cpu_app_pct":23.5,"thermal":{"status":0,"headroom":0.42,"level":0,"reason":null},
    "exposure_ms":3.0,"iso":800,"preview_seq":57,"status_age_ms":420}],
  "tags":[{"id":10,"role":"anchor","label":null,"seen":true,"cams":[1],
           "x_mm":0.0,"y_mm":0.0,"heading_deg":-90.0,"age_ms":61,
@@ -364,13 +504,16 @@ skipped for that client, never queued.
 | `system.mode` | `sim` or `hardware` |
 | `system.registry_version`, `layout_version` | refetch `GET /api/tags` / `GET /api/layout` when these change |
 | `cameras[].online` | a phone session is live |
-| `cameras[].calib.status` | `UNCALIBRATED`, `WEAK` (1 anchor), `OK`, `MISALIGNED` |
+| `cameras[].app_mode` | from the phone's `status` (§4.5); only `tracking` gives poses for control |
+| `cameras[].link` | connection mode (§4.1), `transport` (`udp` or `tcp`), interface and Wi-Fi details from the phone, and what the **server measures** over `link.stats_window_s`: `latency_ms` = one-way transit `receive time − server_time(sent_ns)` (p50/p95); `jitter_ms` = RFC 3550 interarrival jitter of that transit (`J += (\|D\| − J) / 16`); `loss_pct` = missing `seq` ÷ (received + missing) × 100, which includes frames the phone dropped itself (their count is `send_dropped`, from the phone) |
+| `cameras[].calib.status` | `UNCALIBRATED`, `WEAK` (1 floor tag), `OK`, `MISALIGNED` |
+| `cameras[].fps` … `stages_ms`, `cpu_app_pct`, `thermal`, `exposure_ms`, `iso` | the phone's latest `status` (§4.5); `null` when the phone did not measure it |
 | `cameras[].pose_age_ms` | capture→server-receive age of accepted frames over `pose.stats_window_s`; `null` fields while `UNSYNCED` |
 | `tags[]` | every tag seen within `pose.stale_ms` by any camera, plus every registered tag. `role` is `"unassigned"` for tags not in the registry. Floor fields are `null` when no calibrated, synced camera sees the tag (a registered unseen tag keeps its last known position with `seen: false`). `size_mm` = measured size on the floor. `placed` (floor tags only) = its position is known and it is used for calibration. |
 | `cars[]` | every car in `cars.toml`. `tag` = bound tag ID or `null`. `pose` is `null` without a bound, seen tag. The pose is the car's **rotation centre** (tag position corrected for parallax and the tag's `offset_mm`), heading corrected by `heading_offset_deg`. `pose.fresh` = `age_ms` ≤ `pose.stale_ms`. `pose.at_node` = node tag ID within `tracking.at_node_tol_mm`, else `null`. |
 | `cars[].link.state` | `disconnected`, `connecting`, `connected`, `degraded`, `error` |
 | `cars[].motion` | last command sent: `{"left":…, "right":…, "ttl_ms":…}` or `null` when stopped |
-| `cars[].stopped_reason` | why the car may not move now: `null` (may move), or the first that applies in this order: `estop`, `no_link`, `no_tag`, `unsynced`, `uncalibrated`, `misaligned`, `stale_pose`, `bubble`, `operator`, `idle` |
+| `cars[].stopped_reason` | why the car may not move now: `null` (may move), or the first that applies in this order: `estop`, `no_link`, `no_tag`, `unsynced`, `camera_mode` (phone not in `tracking`), `uncalibrated`, `misaligned`, `stale_pose`, `bubble`, `operator`, `idle` |
 | `cars[].battery` | always `"not_measured"` in v1 (no battery sensing; never a made-up number) |
 
 ### 6.3 `event` (as each event is logged)
@@ -387,7 +530,7 @@ skipped for that client, never queued.
 - JSON in and out. Errors: `{"error":{"code":"…","message":"…","details":{…}}}` with HTTP 400
   (validation), 403 (`remote_forbidden`, `bad_origin`), 404 (`not_found`), 409 (conflicts).
 - **Local only:** requests from addresses other than 127.0.0.1 / ::1 get 403 `remote_forbidden`
-  (M8 adds a login). Exempt: `GET /api/health` and `POST /api/control/stop_all`.
+  (M8 adds a login). Exempt: `GET /api/health`, `GET /api/beacon` and `POST /api/control/stop_all`.
 - **Origin check:** `POST`/`PUT`/`DELETE` with an `Origin` header not in `access.allowed_origins` get 403
   `bad_origin`. Exempt: `POST /api/control/stop_all` (stopping can never do harm).
 - The operator recorded in events is `"local"` until M8 adds named logins.
@@ -397,6 +540,7 @@ skipped for that client, never queued.
 | Method and path | Body → response | Milestone |
 | --- | --- | --- |
 | `GET /api/health` | → `{"status":"ok","version":"0.1.0","proto":1,"mode":"sim","uptime_s":12.3}` | M0 |
+| `GET /api/beacon` | → the §4.2 beacon message, `host` = the address the request arrived on (discovery for `wired_adb`) | M2 |
 | `GET /api/config` | → read-only summary: `cars` (name, priority, footprint_mm, color, transport), `pose.stale_ms`, `markers` (dictionary, default_size_mm), `roles`, `station_kinds`, `layout_rules` (the `[validation]` and `[tracking]` values of `map.toml`) | M1 |
 | `POST /api/control/stop_all` | `{}` → `{"estop":true}`. Latches the E-stop; idempotent | M1 |
 | `POST /api/control/resume` | `{"confirm":true}` → `{"estop":false}`; without `confirm: true` → 400 `confirm_required` | M1 |
@@ -412,8 +556,9 @@ skipped for that client, never queued.
 | `POST /api/venue-presets` | `{"name","description"?,"overwrite"?}` saves the current registry, layout and camera overrides | M1 |
 | `POST /api/venue-presets/{name}/apply` | `{"expected_registry_version"?}` → `{"registry_version","layout_version","check":{"matched":[ids],"moved":[{"id","distance_mm"}],"missing":[ids]}}`. `check` compares the preset's measured positions with what the camera sees now; moved nodes are marked `moved` (§7.5). Motion-affecting. | M1 |
 | `DELETE /api/venue-presets/{name}` | → 204; built-in → 409 `preset_builtin` | M1 |
-| `GET /api/cameras` | → list, same objects as `state.cameras` | M1 |
-| `PUT /api/camera-settings` | `{"exposure_ms"?,"iso"?}` overrides the `tuning.toml` defaults (saved with venue presets); `null` clears an override. Sent to phones as `settings` (§4.3). | M1 |
+| `GET /api/cameras` | → list of `state.cameras` objects, each plus `caps` (the `hello` fields `sdk`, `cpu`, `camera`) | M1 |
+| `PUT /api/camera-settings` | `{"exposure_ms"?,"iso"?,"fps"?,"resolution"?,"full_scan_every"?}` overrides the `tuning.toml` defaults (saved with venue presets); `null` clears an override. Sent to phones as `settings` (§4.4). | M1 |
+| `GET /api/cameras/{cam}/benchmarks` | → `{"runs":[bench messages (§4.7) with "received_wall_ms"]}`, newest first | M2 |
 | `POST /api/cameras/{cam}/recalibrate` | `{}` → drops the fit and refits from visible floor tags | M1 |
 | `GET /api/cameras/{cam}/preview.jpg` | → latest JPEG, header `X-Capture-Age-Ms`; 404 if none | M2 |
 | `GET /api/pairing` | → `{"pair_code":"K7QX-M2","devices":[{"device_id","cam","model","last_seen_wall_ms"}]}` | M1 |
@@ -527,7 +672,7 @@ and saved in venue presets.
 | --- | --- |
 | `id` | increasing integer, never reused within one `events.db` |
 | `wall_ms`, `mono_ms` | wall clock (display) and server monotonic (ordering, durations) |
-| `type` | v1 types: `registry` (tag changes, batches, preset apply), `layout` (measure, admin blocks, node moved/back, validation warnings), `operator` (E-stop, resume, camera settings, pairing), `camera` (online/offline, sync ok/lost, calibration status, misaligned, floor tag moved), `system` (start/stop). Later milestones add types. |
+| `type` | v1 types: `registry` (tag changes, batches, preset apply), `layout` (measure, admin blocks, node moved/back, validation warnings), `operator` (E-stop, resume, camera settings, pairing), `camera` (online/offline, link mode, app mode, thermal level, a status sample every 60 s, sync ok/lost, calibration status, misaligned, floor tag moved), `system` (start/stop). Later milestones add types. |
 | `car` | car name, or `null` |
 | `operator` | who acted, or `null` for automatic events |
 | `key`, `value`, `prev` | for state changes: what changed, the new value and the previous one |

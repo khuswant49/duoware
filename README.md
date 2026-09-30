@@ -36,11 +36,12 @@ Features arrive milestone by milestone ([roadmap](docs/plans/ROADMAP.md)).
    cd dashboard && npm install
    ```
 4. **Android:** Android Studio installed; the phone connected with USB debugging (`adb devices` lists it).
+   From M2: install **NDK (Side by side)** and **CMake** in Android Studio → SDK Manager → SDK Tools.
    Gradle must run on Android Studio's bundled JDK 21 (the system Java 26 is too new for Gradle 8.13).
    Create `android/local.properties` with `sdk.dir=C:/Users/<you>/AppData/Local/Android/Sdk` (forward slashes).
    Android Studio creates this file for you when you open the `android/` folder.
-5. **Windows firewall:** on the first server start, allow Python on private networks (UDP 47800/47801 and TCP 8000).
-   Without this the phone can't reach the server.
+5. **Windows firewall:** on the first server start, allow Python on private networks (UDP 47800/47801, TCP 8000
+   and 47802). Without this the phone can't reach the server over tethering or Wi-Fi (adb reverse is unaffected).
 
 ## Run
 

@@ -29,7 +29,8 @@ decisions from the log. It never commands anything. Requirements: `docs/PROJECT_
 ## Architecture map
 
 ```
-android/            Kotlin phone app: marker sensor (M2). Sends PROTOCOL.md §2-4.
+android/            phone app (M2): Kotlin (Camera2, service, networking) + C++ (NDK, OpenCV ArUco,
+                    ROI tracking). Sends PROTOCOL.md §2-4 over UDP (tether/Wi-Fi) or TCP (adb reverse).
 server/             Python 3.13 package `duoware` (FastAPI + asyncio)
   src/duoware/
     __main__.py       python -m duoware [--sim]
@@ -40,7 +41,8 @@ server/             Python 3.13 package `duoware` (FastAPI + asyncio)
     store/            state.db (SQLite, migrations) and the event log (events.db) (M1)
     registry/         tag registry, validation, venue presets (M1)
     safety.py         latched E-stop, "may this change happen while cars move?" (M1)
-    ingest/           phone sessions/pairing, UDP frames, clock sync, beacon, camera stats (M1)
+    ingest/           phone sessions/pairing, UDP (M1) and TCP (M2) frames, clock sync, beacon, adb reverse (M2),
+                      camera and link stats (M1)
     localization/     floor calibration from floor tags, parallax, car poses, world model (M1)
     layout/           road network: edges, grid rotation, validation, suggestions, measure (M1)
     api/              REST routers and the two WebSockets (M1)
@@ -55,7 +57,7 @@ data/               runtime state (git-ignored): state.db, events.db
 docs/               brief, hardware facts/log, plans
 ```
 
-Data flow: phone → UDP frames → `ingest` (session check, clock sync) → `localization` (floor fit, poses)
+Data flow: phone → frames (UDP, or TCP over adb reverse) → `ingest` (session check, clock sync) → `localization` (floor fit, poses)
 → world snapshot → `layout` / `planning` / `control` → `cars` link → car. Everything that happens is logged
 by the `store.events` log (facts separate from reasons). The dashboard reads snapshots over
 `/ws/dashboard` and sends commands through REST.
@@ -71,6 +73,8 @@ by the `store.events` log (facts separate from reasons). The dashboard reads sna
 - **Small modules:** aim < 400 lines per file; one responsibility per module; pure logic (geometry, estimators,
   graph, validation) separate from I/O so it can be unit-tested with fake clocks.
 - **Nothing hard-codes a tag ID or a spacing.** Roles come from the registry; geometry from the camera.
+- **Phone hot path:** no per-frame allocation (Kotlin or C++), no JPEG, no blocking network calls on the
+  camera/detection threads; every per-frame number the app shows is measured, `null` when it can't be.
 - **Simulation never touches hardware:** `--sim` uses TCP car transports only; the Bluetooth/serial transport
   modules are never imported in sim mode.
 - **Honest numbers:** never show a placeholder as a measurement (battery is `"not_measured"`). Never write
@@ -89,7 +93,8 @@ server/.venv/Scripts/python -m pytest server/tests
 # Dashboard
 cd dashboard && npm test && npm run build
 
-# Android (Gradle needs JDK 21: Android Studio's bundled JBR; the system Java 26 is too new)
+# Android (Gradle needs JDK 21: Android Studio's bundled JBR; the system Java 26 is too new).
+# From M2 the build also needs the NDK and CMake from the SDK Manager.
 cd android && JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew assembleDebug
 ```
 

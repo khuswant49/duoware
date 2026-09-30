@@ -7,7 +7,7 @@ Order changed from the brief: the phone app is M2 and the car link is M3 (DECISI
 | # | Milestone | Main risk it retires |
 | --- | --- | --- |
 | M1 | Server core, simulator, tag registry, road-network layout, dashboard live map ([M1.md](M1.md)) | architecture and protocols, in simulation |
-| M2 | Android marker sensor app v1 | pose age, blur at short exposure, lighting, phone timestamps |
+| M2 | Android marker sensor app v1 ([draft](M2.md)): Camera2, C++ ROI tracking, wired/wireless modes, sustained performance | pose age, blur at short exposure, lighting, phone timestamps, heat over hours |
 | M3 | Car link manager, both firmwares, one-click connect, manual drive, E-stop, TTL | Bluetooth reliability, Uno/HC-05, brownouts |
 | M4 | Venue setup wizard, lens, per-car motion calibration, loop-latency step test | the numbers the controller depends on |
 | M5 | Single-car motion on the road network | gyro-less control |
@@ -15,21 +15,18 @@ Order changed from the brief: the phone app is M2 and the car link is M3 (DECISI
 | M7 | Missions, "why?" from the event log, Groq explainer/auditor, timeline | explainability |
 | M8 | Hardening | security, recovery, docs |
 
-## M2 — Android marker sensor app v1 (Sonnet, high effort)
-- **Build:** Kotlin app per PROTOCOL.md §2–4: CameraX `ImageAnalysis` (`KEEP_ONLY_LATEST`, Y plane only),
-  Camera2 interop for manual exposure/ISO, focus lock and white-balance lock (fallback when `MANUAL_SENSOR` is
-  missing: AE lock at minimum exposure compensation, reported in `status`); OpenCV `ArucoDetector`
-  (DICT_4X4_50, sub-pixel corner refinement); UDP sender thread (queue depth 1); sync-clock detection (§3.1)
-  and sync replies; beacon listener, pairing-code entry, token storage, WebSocket session; 1 Hz status;
-  preview thread (downscaled JPEG, never on the tracking thread); on-screen fps, detection ms, markers,
-  exposure/ISO, link state, thermal warning; keep screen on; landscape.
-- **Server:** `GET /api/cameras/{cam}/preview.jpg`; dashboard preview panel; camera-settings controls.
-- **Hardware test (owner):** over USB tethering and WiFi: fps and detection ms with 2 car tags and 9 floor tags in
-  view; server pose age p50/p95/max over 5 minutes; timestamp source and Camera2 level; clean-read ratio of a
-  car tag pushed by hand at < 150, 150–300 and > 300 px/s at 3 ms exposure vs DUO-WARE 1's numbers; image
-  brightness/ISO needed in the room (decides whether lamps are needed).
-- **Acceptance:** targets from brief §5 are measured and logged in HARDWARE_LOG.md (met or not); tracking ≥ 30 fps
-  or the reason it is not; no JPEG on the tracking path (code review + profiler trace).
+## M2 — Android marker sensor app v1 (Sonnet, high effort) — draft plan: [M2.md](M2.md)
+- **App:** Camera2 directly with one YUV `ImageReader` at the sensor's maximum fps, manual short exposure/ISO,
+  locked focus/AWB, capabilities reported (D30); C++ detection with one JNI call per frame and no per-frame
+  allocation (D31); ROI tracking with periodic full scans on the fastest cores (D32); connection modes WIRED
+  (USB tethering, adb-reverse TCP fallback) and WIRELESS (Wi-Fi) with discovery in each (D33); foreground
+  service, wake lock, sustained performance mode, ADPF hints, battery-optimisation exemption, thermal ladder
+  (D34); per-stage timings, CPU, thermal on screen; benchmark mode (D36).
+- **Server:** TCP frames listener, `adb reverse` runner, `/api/beacon`, preview endpoint, benchmark storage and
+  dashboard views; simulator TCP mode.
+- **Hardware test:** discovery and link statistics in all three modes; mode switch stops poses and recovers
+  without recalibration; capabilities; allocation-free loop; benchmarks incl. the JNI-overhead baseline; a
+  2-hour soak; brief §5 targets and the blur test vs DUO-WARE 1.
 
 ## M3 — Car link manager and firmware (Sonnet, medium effort)
 - **Needs first:** the Car B answers in `docs/HARDWARE.md` (pins, serial choice, power).

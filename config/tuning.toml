@@ -37,14 +37,38 @@ place_move_tol_mm = 15          # an unplaced anchor moving more than this resta
 parallax_ema = 0.05
 parallax_max_scale = 1.25       # ignore apparent/printed ratios above this (bad detection), per frame
 
+[link]
+# Server-side measurement of the phone link shown on the dashboard (PROTOCOL.md §6.2 cameras[].link):
+# one-way latency p50/p95, RFC 3550 jitter and packet loss over this window.
+stats_window_s = 10
+
 [camera]
-# Sent to the phone in "welcome"/"settings" (PROTOCOL.md §4.3). The phone reports what it achieved.
-# exposure_ms and iso are defaults: a venue preset may override them (lighting differs per venue).
+# Sent to the phone in "welcome"/"settings" (PROTOCOL.md §4.4). The phone reports what it achieved.
+# exposure_ms, iso, fps and resolution are defaults: PUT /api/camera-settings and venue presets override them.
 resolution = [1280, 720]        # analysis stream size; 80-90 mm tags must stay >= ~25 px wide
-fps = 30
+fps = 0                         # 0 = the highest the sensor supports at `resolution` (Camera2 min frame duration)
 exposure_ms = 3.0               # short exposure is the key feature: blur limited DUO-WARE 1 above 150 px/s at ~26 ms
 iso = 800                       # raise if the image is too dark at the short exposure
 focus = "locked"                # "locked" = autofocus once on the floor, then lock
+awb = "locked"                  # "locked" = auto white balance once, then lock
 preview_fps = 3                 # dashboard preview, 0 = off; never on the tracking path
 preview_width = 480
 preview_jpeg_quality = 60
+
+[phone]
+# Region-of-interest tracking on the phone (PROTOCOL.md §4.4 "tracking", DECISIONS.md D32).
+full_scan_every = 10            # full-frame scan at least every N frames (3 Hz at 30 fps, 6 Hz at 60 fps)
+roi_margin = 1.5                # window grows by this many tag side lengths on every side of the predicted box
+roi_min_px = 64                 # smallest window edge (ArUco needs the quiet zone around the tag)
+threads = 0                     # detection worker threads; 0 = cores in the fastest CPU cluster
+
+[phone.thermal]
+# Thermal ladder (PROTOCOL.md §4.4, DECISIONS.md D34): scale down before Android throttles on its own.
+# Headroom is PowerManager.getThermalHeadroom(forecast_s): 1.0 = the point where throttling starts.
+forecast_s = 10
+headroom_down = 0.85            # step one level down at or above this forecast
+headroom_up = 0.65              # step one level up after up_after_s below this
+up_after_s = 60
+status_down = 2                 # also step down at thermal status >= this (2 = MODERATE)
+fps_steps = [1.0, 0.75, 0.5]    # fraction of the base fps at levels 0, 1, 2
+resolution_steps = [[960, 540]] # then smaller resolutions (same aspect ratio as [camera] resolution)

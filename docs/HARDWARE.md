@@ -40,8 +40,9 @@ Owner answers from 2026-10-01 unless noted. "Open" items must be answered before
 | Item | Fact |
 | --- | --- |
 | Phone | realme 9 Pro+ (Android; exact Android version to note in M2) |
-| Unknown until M2 | Camera2 hardware level and `MANUAL_SENSOR` support, `SENSOR_INFO_TIMESTAMP_SOURCE`, whether lens intrinsics/distortion are reported, detection time at 1280 × 720 |
-| Network | USB tethering to the laptop preferred; same-router WiFi as fallback |
+| Unknown until M2 | Camera2 hardware level and `MANUAL_SENSOR` support, `SENSOR_INFO_TIMESTAMP_SOURCE`, YUV sizes and their maximum fps, whether lens intrinsics/distortion are reported, detection time at 1280 × 720, sustained performance mode / ADPF support, thermal behaviour over 2 hours |
+| Connection modes | WIRED: USB tethering, or `adb reverse` over the USB cable when tethering is unavailable; WIRELESS: Wi-Fi (router, laptop hotspot or phone hotspot; 5 GHz fine). Chosen in the app (PROTOCOL.md §4.1). |
+| Battery management | realme UI kills background apps aggressively: exempt the app from battery optimisation **and** allow background activity under Settings → Battery → App battery management (the app shows the steps). |
 | Mount height, floor area, lighting | not measured (not needed); lighting adequacy for a 3 ms exposure is checked in M2 |
 
 ## Laptop
