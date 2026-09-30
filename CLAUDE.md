@@ -100,7 +100,10 @@ cd android && JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew 
 
 On Linux/macOS (cloud sessions) the venv interpreter is `server/.venv/bin/python`; the server needs Python
 3.13 (install it, e.g. with `uv python install 3.13`, if the machine has an older one). The Android build
-needs the Android SDK and is only run on the owner's laptop.
+needs the Android SDK: it runs on the owner's laptop and in GitHub Actions (`.github/workflows/android.yml`, from
+M2 step 2), which uploads the APKs as artifacts. A cloud session without an SDK relies on that workflow (check it
+with `gh run list` / `gh run view` when `gh` is available, otherwise ask the owner) and never claims an Android
+build or test passed without seeing the run.
 
 PowerShell equivalent for Android:
 `$env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"; cd android; .\gradlew.bat assembleDebug`

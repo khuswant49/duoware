@@ -85,6 +85,42 @@ Rules:
 
 For Android work, add: `Build with the Gradle wrapper and install with adb on my connected phone.`
 
+For M2 on the laptop after the cloud part, use this prompt with: `Continue docs/plans/M2.md from step 8 on the
+branch m2 (read the "Handoff after step 7" note under Results first).`
+
+---
+
+## Prompt 2c — Sonnet in a cloud session: M2 steps 2–7
+
+Start a cloud Claude Code session on the GitHub repository with **Sonnet 5.5**, high effort. Before the first phone
+checkpoint, create the shared test signing key and the four GitHub secrets (M2.md, "Prerequisites").
+
+```
+Implement docs/plans/M2.md steps 2 to 7 in this cloud session. Step 1 is already done on main.
+
+Before coding, read CLAUDE.md, PROTOCOL.md, DECISIONS.md and docs/plans/M2.md, especially "Where each step
+runs". If anything in the plan is ambiguous, contradicts PROTOCOL.md, or looks wrong, stop and tell me instead
+of guessing.
+
+Setup and rules:
+- This is a Linux machine: the venv interpreter is server/.venv/bin/python (Python 3.13). Create the venv and
+  install "server[dev]" if it is missing.
+- Work on a branch named m2, created from main. Commit after each working step ("M2 step N: <what>") and push
+  the m2 branch after every commit: the GitHub Actions workflows build the APKs from it, and pushing keeps the
+  work safe. Never push to main, never merge, never force-push.
+- There is probably no Android SDK here. The android.yml workflow (you create it in step 2) is the Android
+  build: after each push, check the run (gh run list / gh run view if gh works here, otherwise ask me). A step
+  is finished only when its CI runs are green. Never write that an Android build or test passed without
+  seeing the run.
+- Run the server suite (and the dashboard tests when you touch the dashboard) before every commit.
+- Phone checkpoints (after step 2 and after step 7): I install the CI build on my phone and run the
+  instrumented tests. Tell me the run ID and the exact commands from the README, then wait for my results.
+- Do not change PROTOCOL.md or DECISIONS.md. Write needed changes under "Proposed changes" in M2.md and follow
+  the plan as written.
+- Nothing is "verified on hardware" unless I ran it. Write "unit test only" or "simulation only" otherwise.
+- Stop after step 7: write the "Handoff after step 7" note under Results in M2.md, commit, push, and tell me.
+```
+
 ---
 
 ## Prompt 3 — Opus: review a milestone and plan the next one

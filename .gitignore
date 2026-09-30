@@ -32,3 +32,10 @@ captures/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Shared test signing key (M2): never commit keys
+android/keystore.properties
+*.jks
+*.keystore
+# CI artifacts downloaded with gh run download
+/build/
