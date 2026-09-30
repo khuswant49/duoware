@@ -52,3 +52,30 @@ def env(tmp_path):
     e = Env(tmp_path)
     yield e
     e.close()
+
+
+# ---------------------------------------------------------------------------- helpers shared by ingest/API tests
+
+import dataclasses
+
+from duoware.protocol.phone import CameraCaps, CpuInfo, Hello, Link, WifiInfo
+
+
+def make_hello(device_id="dev-1", token=None, pair_code=None, mode="wireless", model="test phone") -> Hello:
+    caps = CameraCaps("0", "FULL", ("MANUAL_SENSOR",), "REALTIME", (10000, 500000000), (100, 6400), ((15, 30),),
+                      ((1280, 720, 30.0),), False, None, None, None, None)
+    wifi = WifiInfo(5.0, -50, 800) if mode == "wireless" else None
+    return Hello(device_id, token, pair_code, "0.0.1", model, "13", 33, Link(mode, "wlan0", "192.168.1.23", wifi),
+                 CpuInfo(8, (2000000,) * 8), caps)
+
+
+def patched_settings(settings, **ports):
+    """Copy of `settings` with ports replaced: http_port, frames_port, beacon_port, tcp_port, beacon_interval_s."""
+    srv = settings.server
+    udp = dataclasses.replace(srv.udp, **{k: v for k, v in {"frames_port": ports.get("frames_port"),
+                                                            "beacon_port": ports.get("beacon_port"),
+                                                            "beacon_interval_s": ports.get("beacon_interval_s")}.items()
+                                          if v is not None})
+    http = dataclasses.replace(srv.http, port=ports["http_port"]) if "http_port" in ports else srv.http
+    tcp = dataclasses.replace(srv.tcp, frames_port=ports["tcp_port"]) if "tcp_port" in ports else srv.tcp
+    return dataclasses.replace(settings, server=dataclasses.replace(srv, udp=udp, http=http, tcp=tcp))
