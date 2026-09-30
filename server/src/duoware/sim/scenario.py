@@ -47,10 +47,15 @@ class PhoneModelCfg:
     blur_zero_px: float
     exposure_ms: float
     link_mode: str
+    transport: str                 # "udp" (tether / Wi-Fi) or "tcp" (wired_adb: frames and sync over one TCP connection)
     pipeline_ms: tuple[float, float]
     detect_ms: tuple[float, float]
     clock_offset_s: float
     clock_drift_ppm: float
+
+    def __post_init__(self) -> None:
+        if self.transport not in ("udp", "tcp"):
+            raise ValueError(f"phone_model.transport must be 'udp' or 'tcp', not {self.transport!r}")
 
 
 @dataclass(frozen=True)

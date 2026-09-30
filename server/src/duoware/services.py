@@ -12,7 +12,9 @@ from duoware.clock import Clock, SystemClock
 from duoware.ingest.beacon import BeaconSender, interfaces
 from duoware.ingest.camera_settings import build_camera_settings
 from duoware.ingest.overrides import CameraOverrides
+from duoware.ingest.frames import FrameIngest
 from duoware.ingest.sessions import PhoneSessions
+from duoware.ingest.tcp import FramesTcpServer
 from duoware.ingest.udp import FramesEndpoint
 from duoware.monitor import LoopLagMonitor
 from duoware.layout.service import LayoutService
@@ -55,7 +57,9 @@ class Services:
     world: WorldModel
     layout: LayoutService
     presets: VenuePresets
+    ingest: FrameIngest
     endpoint: FramesEndpoint
+    tcp_server: FramesTcpServer
     beacon: BeaconSender | None
     monitor: LoopLagMonitor
     broadcaster: Broadcaster = field(init=False)
@@ -79,14 +83,16 @@ class Services:
         world = WorldModel(settings, registry, floor, clock, events, sessions)
         layout = LayoutService(db, registry, world, settings, safety, events, clock)
         presets = VenuePresets(db, registry, overrides, events, settings, safety, clock, layout)
-        endpoint = FramesEndpoint(sessions, world, clock, settings.tuning.clock_sync)
+        ingest = FrameIngest(sessions, world, clock, settings.tuning.clock_sync)
+        endpoint = FramesEndpoint(sessions, world, clock, settings.tuning.clock_sync, ingest)
+        tcp_server = FramesTcpServer(sessions, ingest, clock)
         ports = {"http": settings.server.http.port, "frames": settings.server.udp.frames_port,
                  "tcp": settings.server.tcp.frames_port, "beacon": settings.server.udp.beacon_port}
         beacon = BeaconSender(settings, db.server_id, interfaces_fn or interfaces,
                               lambda: (ports["http"], ports["frames"], ports["tcp"]))
         monitor = LoopLagMonitor(settings.server.monitor, clock, events)
         sv = Services(settings, clock, mode, db, events, safety, registry, overrides, floor, sessions, world, layout,
-                      presets, endpoint, beacon, monitor, ports=ports)
+                      presets, ingest, endpoint, tcp_server, beacon, monitor, ports=ports)
         sv.broadcaster = Broadcaster(sv)
         overrides.on_change(lambda _new: sv.push_settings())
         registry.on_change(sv._on_registry_change)
@@ -126,6 +132,7 @@ class Services:
         self._transport, _ = await loop.create_datagram_endpoint(
             lambda: self.endpoint, local_addr=("0.0.0.0", self.settings.server.udp.frames_port))
         self.ports["frames"] = self._transport.get_extra_info("sockname")[1]
+        self.ports["tcp"] = await self.tcp_server.start("0.0.0.0", self.settings.server.tcp.frames_port)
         if self.beacon is not None:
             self.beacon.start()
         self._tasks.append(loop.create_task(self._session_ticker()))
@@ -157,6 +164,8 @@ class Services:
                 await ws.close(1001)
             except Exception:
                 pass
+        await self.tcp_server.stop()
+        self.ingest.stop()
         if self._transport is not None:
             self._transport.close()
             self._transport = None

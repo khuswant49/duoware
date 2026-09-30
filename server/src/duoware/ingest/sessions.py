@@ -38,10 +38,12 @@ class Session:
     clock_sync: ClockSync
     stats: CameraStats
     link_stats: LinkStats
-    transport: str = "udp"                       # "tcp" once M2 adds the wired_adb listener
+    transport: str = "udp"                       # "udp" or "tcp": the transport of the latest accepted frame (PROTOCOL.md §6.2)
     last_status: Status | None = None
     status_at_ns: int | None = None
-    frame_addr: tuple[str, int] | None = None    # source of the latest frame: where sync requests go
+    frame_addr: tuple[str, int] | None = None    # UDP only: source of the latest frame
+    reply: Callable[[bytes], None] | None = None  # where `sync` requests go: set by the latest accepted frame
+                                                  # (UDP: sendto its source; TCP: a framed write on its connection)
     last_seq: int | None = None
     sync_sent: dict[int, int] = field(default_factory=dict)      # n -> t1 of requests sent in the last 2 s
     sync_n: int = 0

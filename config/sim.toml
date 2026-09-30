@@ -59,7 +59,14 @@ blur_ok_px = 4.0                # always detected below this
 blur_half_px = 7.0              # 50% detected here (linear between points)
 blur_zero_px = 12.0             # never detected above this
 exposure_ms = 3.0               # initial value; the server's settings message replaces it
-link_mode = "wired_tether"      # reported in hello/status; M1 always sends UDP (wired_adb/TCP arrives in M2)
+link_mode = "wired_tether"      # reported in hello/status when transport = "udp"
+# How the simulated phone sends frames and answers sync (PROTOCOL.md §2, §2.1):
+#   "udp": datagrams to frames_port, found through the beacon (USB tethering / Wi-Fi).
+#   "tcp": like `wired_adb`: finds the server with GET /api/beacon on [server] host (127.0.0.1), reports link.mode
+#          "wired_adb" whatever link_mode says, and sends length-prefixed frames on one TCP connection to the
+#          frames_tcp_port from `welcome` (a frame is dropped and counted as send_dropped if the last write has not
+#          drained). Packet loss in [network] does not apply: TCP does not lose packets.
+transport = "udp"
 # ROI emulation: the sim follows settings.tracking (track_ids, full_scan_every) and marks frames
 # "full" or "roi" like the real app, so the server's handling of roi frames is tested.
 # Values the sim does not model (CPU load, thermal headroom) are reported as null, never invented.

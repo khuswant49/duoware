@@ -50,7 +50,7 @@ def test_pairing_with_the_code_then_reconnect_with_the_token(app_client, stack):
     c = app_client
     ws, w = pair(c, stack)
     assert w["t"] == "welcome" and w["cam"] == 1 and len(w["sid"]) == 16 and len(w["token"]) == 32
-    assert w["frames_port"] == c.sv.ports["frames"] and w["frames_tcp_port"] == 47802 and w["server_id"] == c.sv.db.server_id
+    assert w["frames_port"] == c.sv.ports["frames"] and w["frames_tcp_port"] == c.sv.ports["tcp"] and w["server_id"] == c.sv.db.server_id
     s = w["settings"]
     assert s["resolution"] == [1280, 720] and s["exposure_ns"] == 3_000_000 and s["iso"] == 800
     assert s["tracking"]["track_ids"] == [] and s["tracking"]["full_scan_every"] == 10

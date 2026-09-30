@@ -63,10 +63,13 @@ class ServerHarness:
 PARKED = {"DUO-A": (200.0, 250.0, 7.0), "DUO-B": (150.0, 650.0, 8.0)}     # between the nodes: no floor tag is covered
 
 
-def make_scenario(http_port: int, parked: bool = False, **server_overrides) -> Scenario:
+def make_scenario(http_port: int, parked: bool = False, transport: str | None = None, **server_overrides) -> Scenario:
     """config/sim.toml pointed at the harness: no discovery, the test pair code, free car ports. `parked` starts the
-    cars between the nodes (by default DUO-A sits on the origin tag and DUO-B on node 12, hiding them)."""
+    cars between the nodes (by default DUO-A sits on the origin tag and DUO-B on node 12, hiding them). `transport`
+    ("udp" or "tcp") replaces `[phone_model] transport`; "tcp" finds the server with GET /api/beacon on 127.0.0.1."""
     sc = load_scenario()
+    if transport is not None:
+        sc = dataclasses.replace(sc, phone_model=dataclasses.replace(sc.phone_model, transport=transport))
     if parked:
         sc = dataclasses.replace(sc, car=tuple(dataclasses.replace(c, start=PARKED[c.name]) for c in sc.car))
     srv = dataclasses.replace(sc.server, discovery=False, host="127.0.0.1", http_port=http_port, pair_code=PAIR_CODE,

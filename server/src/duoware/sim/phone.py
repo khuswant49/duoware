@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import socket
+import urllib.request
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -29,6 +30,7 @@ from duoware.sim.camera_model import PinholeCamera
 from duoware.sim.detector_model import DetectorModel
 from duoware.sim.frame_builder import FrameBuilder
 from duoware.sim.scenario import Scenario
+from duoware.sim.tcp_link import SimTcpLink
 from duoware.sim.world import SimWorld
 
 log = logging.getLogger(__name__)
@@ -40,6 +42,8 @@ STATUS_PERIOD_S = 1.0              # PROTOCOL.md §4.5: status at 1 Hz
 STAGE_WINDOW_S = 10.0              # PROTOCOL.md §4.5: stage timings are p50/p95 over the last 10 s
 TRUTH_KEEP = 20000                 # frames of ground truth kept
 RECONNECT_S = 1.0
+PROBE_TIMEOUT_S = 1.0               # PROTOCOL.md §4.1 wired_adb: the `GET /api/beacon` probe times out after 1 s
+ADB_INTERFACE = "lo"               # the loopback interface `adb reverse` connects through
 APP_VERSION = "0.0.0-sim"
 SIM_MODEL = "DUO-WARE simulator"
 ISO = 800                          # reported sensitivity (the sim does not model noise from ISO)
@@ -65,6 +69,7 @@ class _Session:
     cam: int
     frames_addr: tuple[str, int]
     tasks: list[asyncio.Task] = field(default_factory=list)
+    tcp: SimTcpLink | None = None          # `transport = "tcp"`: frames and sync on one TCP connection (§2.1)
 
 
 class SimPhone:
@@ -78,7 +83,8 @@ class SimPhone:
         self.builder = FrameBuilder(scenario, world, self.camera, self.detector)
         self.pair_code = pair_code or scenario.server.pair_code or load_env(REPO_ROOT / ".env").get("DUO_PAIR_CODE") or None
         self.app_mode = "tracking"
-        self.link_mode = scenario.phone_model.link_mode
+        self.use_tcp = scenario.phone_model.transport == "tcp"
+        self.link_mode = "wired_adb" if self.use_tcp else scenario.phone_model.link_mode
         self.token: str | None = None
         self.settings: CameraSettings | None = None
         self.truth_log: dict[int, TruthRecord] = {}
@@ -132,18 +138,38 @@ class SimPhone:
                 sock.close()
         return s.host, s.http_port, s.frames_port
 
+    async def _probe_beacon(self) -> tuple[str, int, int, int]:
+        """`wired_adb` discovery (PROTOCOL.md §4.1): `GET /api/beacon` on the configured host, which is 127.0.0.1 through
+        `adb reverse`. (host, http_port, frames_port, frames_tcp_port); `OSError` when there is no usable answer."""
+        s = self.sc.server
+        url = f"http://{s.host}:{s.http_port}/api/beacon"
+
+        def get() -> bytes:
+            with urllib.request.urlopen(url, timeout=PROBE_TIMEOUT_S) as r:        # noqa: S310 - fixed http URL
+                return r.read()
+
+        data = await asyncio.get_running_loop().run_in_executor(None, get)
+        try:
+            b = parse_beacon(data)
+        except ProtocolError as e:
+            raise OSError(f"bad beacon from {url}: {e}") from e
+        return b.host, b.http_port, b.frames_port, b.frames_tcp_port
+
     def _hello(self) -> Hello:
         cam, m = self.sc.camera, self.sc.phone_model
         w, h = cam.resolution
         caps = CameraCaps("0", "FULL", ("MANUAL_SENSOR", "READ_SENSOR_SETTINGS"), "REALTIME", (10000, 500000000),
                           (100, 6400), ((int(cam.fps), int(cam.fps)),), ((w, h, cam.fps),), False, None, None, None, (w, h))
-        link = Link(self.link_mode, "sim0", "127.0.0.1", None)
+        link = Link(self.link_mode, ADB_INTERFACE if self.use_tcp else "sim0", "127.0.0.1", None)
         return Hello(cam.device_id, self.token, self.pair_code, APP_VERSION, SIM_MODEL, "sim", 0, link,
                      CpuInfo(1, (0,)), caps)
 
     async def connect(self) -> None:
         """Discovers the server, pairs (or reconnects with the stored token) and starts streaming."""
-        host, http_port, frames_port = await self._discover()
+        if self.use_tcp:
+            host, http_port, frames_port, tcp_port = await self._probe_beacon()
+        else:
+            (host, http_port, frames_port), tcp_port = await self._discover(), 0
         self.server_host = host
         ws = await connect(f"ws://{host}:{http_port}/ws/phone", max_size=None)
         await ws.send(encode_hello(self._hello()))
@@ -153,10 +179,13 @@ class SimPhone:
             raise PairingError(msg.get("code", "unknown"), msg.get("message", ""))
         self.token = msg.get("token") or self.token
         self.settings = CameraSettings.parse(Obj(msg["settings"]))
-        if self._transport is None:
+        if self._transport is None and not self.use_tcp:
             self._transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(
                 lambda: _FramesSocket(self), local_addr=("0.0.0.0", 0))
         sess = _Session(ws, msg["sid"], msg["cam"], (host, msg["frames_port"] or frames_port))
+        if self.use_tcp:
+            sess.tcp = SimTcpLink(host, msg.get("frames_tcp_port") or tcp_port, sess.sid, sess.cam, self._now_phone)
+            sess.tcp.start()
         self.session = sess
         self._seq = 0
         self._frame_index = 0
@@ -176,6 +205,8 @@ class SimPhone:
         for t in sess.tasks:
             t.cancel()
         await asyncio.gather(*sess.tasks, return_exceptions=True)
+        if sess.tcp is not None:
+            await sess.tcp.close()
         try:
             await sess.ws.close()
         except Exception:
@@ -288,7 +319,8 @@ class SimPhone:
         self._last_markers = len(markers)
         self._recent_frames.append(now)
         self._stages.append((now, pipe / NS_PER_MS, det / NS_PER_MS, (now - net - t_cap) / NS_PER_MS, rec.scan))
-        drop = self.rng.random() < self.sc.network.drop_fraction or self._is_burst(now)
+        # a TCP connection does not lose packets: the phone itself drops a frame it cannot write (send_dropped)
+        drop = sess.tcp is None and (self.rng.random() < self.sc.network.drop_fraction or self._is_burst(now))
         if drop:
             rec.dropped = True
             self.dropped_seqs.append(seq)
@@ -297,7 +329,11 @@ class SimPhone:
         frame = Frame(sess.cam, sess.sid, seq, self.phone_ns(t_cap), exp, 0, self.phone_ns(t_cap + pipe),
                       self.phone_ns(now - net), *self.sc.camera.resolution, rec.scan,
                       () if full else tuple(sorted(tracked)), tuple(markers))
-        if self._transport is not None:
+        if sess.tcp is not None:
+            if not sess.tcp.send(encode_frame(frame)):
+                rec.arrival_ns, rec.dropped = None, True
+                self.dropped_seqs.append(seq)
+        elif self._transport is not None:
             self._transport.sendto(encode_frame(frame), sess.frames_addr)
 
     # ------------------------------------------------------------------------------ UDP sync
@@ -339,10 +375,10 @@ class SimPhone:
             await asyncio.sleep(STATUS_PERIOD_S)
             every = self.settings.tracking.full_scan_every if self.settings else 1
             stages, rate = self._stats(self.clock.mono_ns())
-            link = Link(self.link_mode, "sim0", "127.0.0.1", None)
+            link = Link(self.link_mode, ADB_INTERFACE if self.use_tcp else "sim0", "127.0.0.1", None)
             s = Status(sess.cam, self.app_mode, cam.timestamp_clock, link, rate["fps"], cam.fps, tuple(cam.resolution),
                        stages, {"full_every": float(every), "rois_per_frame": None, "lost_rescans": float(self._lost_rescans)},
-                       0, 0, self._exposure_ns(), ISO, "locked", None, None, None, None, None, None, self._last_markers)
+                       0, sess.tcp.send_dropped if sess.tcp is not None else 0, self._exposure_ns(), ISO, "locked", None, None, None, None, None, None, self._last_markers)
             try:
                 await sess.ws.send(encode_status(s))
             except Exception:

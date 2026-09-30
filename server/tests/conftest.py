@@ -70,14 +70,15 @@ def make_hello(device_id="dev-1", token=None, pair_code=None, mode="wireless", m
 
 
 def patched_settings(settings, **ports):
-    """Copy of `settings` with ports replaced: http_port, frames_port, beacon_port, tcp_port, beacon_interval_s."""
+    """Copy of `settings` with ports replaced: http_port, frames_port, beacon_port, tcp_port, beacon_interval_s.
+    The TCP frames port defaults to 0 (a free port) so that no test binds 47802."""
     srv = settings.server
     udp = dataclasses.replace(srv.udp, **{k: v for k, v in {"frames_port": ports.get("frames_port"),
                                                             "beacon_port": ports.get("beacon_port"),
                                                             "beacon_interval_s": ports.get("beacon_interval_s")}.items()
                                           if v is not None})
     http = dataclasses.replace(srv.http, port=ports["http_port"]) if "http_port" in ports else srv.http
-    tcp = dataclasses.replace(srv.tcp, frames_port=ports["tcp_port"]) if "tcp_port" in ports else srv.tcp
+    tcp = dataclasses.replace(srv.tcp, frames_port=ports.get("tcp_port", 0))      # 0 = a free port (never 47802 in tests)
     return dataclasses.replace(settings, server=dataclasses.replace(srv, udp=udp, http=http, tcp=tcp))
 
 
