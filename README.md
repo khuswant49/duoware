@@ -98,8 +98,9 @@ adb shell am instrument -w -r com.duoware.sensor.test/androidx.test.runner.Andro
 ```
 
 `build/` at the repository root is git-ignored. After the instrumented tests, reinstall the release APK for
-measurements (every hardware measurement uses the release build). The smoke test logs one line with the OpenCV version,
-thread count and parallel framework under the logcat tag `DuoSmoke` (`adb logcat -d -s DuoSmoke`).
+measurements (every hardware measurement uses the release build). The smoke test prints the device, the OpenCV version,
+thread count and parallel framework as `INSTRUMENTATION_STATUS: opencv=...` lines in the `am instrument` output (and in
+logcat under the tag `DuoSmoke`, `adb logcat -d -s DuoSmoke`); `INSTRUMENTATION_CODE: -1` at the end means all tests passed.
 
 **Shared test signing key (once).** Every machine has its own debug key, so an APK built by CI would not install over one
 built on the laptop, and uninstalling wipes the app's `device_id` and pairing token. One key signs every build instead.
