@@ -98,6 +98,10 @@ cd dashboard && npm test && npm run build
 cd android && JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew assembleDebug
 ```
 
+On Linux/macOS (cloud sessions) the venv interpreter is `server/.venv/bin/python`; the server needs Python
+3.13 (install it, e.g. with `uv python install 3.13`, if the machine has an older one). The Android build
+needs the Android SDK and is only run on the owner's laptop.
+
 PowerShell equivalent for Android:
 `$env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"; cd android; .\gradlew.bat assembleDebug`
 
@@ -119,4 +123,5 @@ firmware milestone ends with a hardware checklist the owner runs.
   kick-start threads, the LLM driving pilot, hard-coded pixel coordinates. Never scan random COM ports or
   toggle the Windows Bluetooth radio.
 - The old project (`C:\Users\khusw\Downloads\Duo_Ware\Duo_Ware`) is reference only: read, port with care,
-  never modify.
+  never modify. The files the brief says to reuse are copied in `docs/reference/duoware1/` (read-only, for
+  sessions without the owner's laptop, e.g. cloud).
