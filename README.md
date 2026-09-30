@@ -77,7 +77,62 @@ npm run build    # production build into dashboard/dist, served by the Python se
 cd android
 JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew installDebug
 ```
-Or open `android/` in Android Studio and press Run. The M0 app only shows an empty status screen.
+Or open `android/` in Android Studio and press Run. The app only shows a placeholder screen until M2 step 10; the native
+library (OpenCV) is covered by the instrumented smoke test.
+
+### Installing a CI build (the phone app built by GitHub Actions)
+
+`.github/workflows/android.yml` builds the app on every push that touches `android/**` (cloud sessions have no Android
+SDK). Each run uploads the artifact `duoware-sensor-<short sha>` with `app-debug.apk`, `app-release.apk`,
+`app-debug-androidTest.apk` and the JVM unit-test reports. Windows PowerShell, with the `gh` CLI logged in
+(`gh auth login`) and the phone on `adb devices`:
+
+```powershell
+gh run list --branch m2 --workflow android.yml -L 3
+gh run download <run id> -D build\ci-apks
+adb install -r build\ci-apks\duoware-sensor-<sha>\app-release.apk
+# instrumented tests: the debug app plus the test APK
+adb install -r build\ci-apks\duoware-sensor-<sha>\app-debug.apk
+adb install -r build\ci-apks\duoware-sensor-<sha>\app-debug-androidTest.apk
+adb shell am instrument -w -r com.duoware.sensor.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+`build/` at the repository root is git-ignored. After the instrumented tests, reinstall the release APK for
+measurements (every hardware measurement uses the release build). The smoke test logs one line with the OpenCV version,
+thread count and parallel framework under the logcat tag `DuoSmoke` (`adb logcat -d -s DuoSmoke`).
+
+**Shared test signing key (once).** Every machine has its own debug key, so an APK built by CI would not install over one
+built on the laptop, and uninstalling wipes the app's `device_id` and pairing token. One key signs every build instead.
+It is a test key for sideloading only and never signs anything published. Keep the file **outside** the repository:
+
+```powershell
+mkdir $env:USERPROFILE\.duoware -Force
+& "C:\Program Files\Android\Android Studio\jbr\bin\keytool.exe" -genkeypair -v -keystore $env:USERPROFILE\.duoware\duo-test.jks -alias duo -keyalg RSA -keysize 2048 -validity 10000
+```
+
+Add four repository secrets (GitHub → Settings → Secrets and variables → Actions, or `gh secret set NAME`):
+`DUO_KEYSTORE_B64` (the output of `[Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:USERPROFILE\.duoware\duo-test.jks"))`),
+`DUO_KEYSTORE_PASSWORD`, `DUO_KEY_ALIAS` (`duo`) and `DUO_KEY_PASSWORD`. For laptop builds create the git-ignored
+`android/keystore.properties`:
+
+```properties
+storeFile=C:/Users/<you>/.duoware/duo-test.jks
+storePassword=<the keystore password>
+keyAlias=duo
+keyPassword=<the key password>
+```
+
+Without the key, builds fall back to the machine's debug key and print "shared test key missing". The job summary of each
+CI run says whether the shared key was used and shows the release APK's certificate digest.
+
+**Windows firewall (once, administrator PowerShell).** Tether and hotspot networks are usually classified "Public", where
+Python's first-run prompt often does not apply:
+
+```powershell
+New-NetFirewallRule -DisplayName "DUO-WARE frames UDP" -Direction Inbound -Protocol UDP -LocalPort 47801 -Action Allow -Profile Any
+New-NetFirewallRule -DisplayName "DUO-WARE HTTP and phone WebSocket" -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow -Profile Any
+New-NetFirewallRule -DisplayName "DUO-WARE frames TCP" -Direction Inbound -Protocol TCP -LocalPort 47802 -Action Allow -Profile Any
+```
 
 **Firmware** (M3+): open `firmware/car_esp32/car_esp32.ino` (board "ESP32 Dev Module") or
 `firmware/car_uno/car_uno.ino` (board "Arduino Uno") in the Arduino IDE and upload. See each folder's README.

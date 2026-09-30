@@ -1,0 +1,52 @@
+# Server and dashboard tests on every push that touches them (M2 plan, step 2). A test that cannot run on Linux is
+# skipped with a stated reason in the test file, never deleted.
+name: server
+
+on:
+  push:
+    paths:
+      - "server/**"
+      - "config/**"
+      - "dashboard/**"
+      - "PROTOCOL.md"
+      - "android/app/src/test/resources/**"
+      - ".github/workflows/server.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: server-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: server/pyproject.toml
+      - run: pip install -e "server[dev]"
+      - run: pytest server/tests
+
+  dashboard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build

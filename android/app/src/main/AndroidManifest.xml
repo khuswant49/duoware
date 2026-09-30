@@ -5,6 +5,8 @@
         android:allowBackup="false"
         android:label="@string/app_name"
         android:theme="@android:style/Theme.Material.NoActionBar">
+        <!-- H6: lets Android Studio's profiler attach to the release build without making it debuggable. -->
+        <profileable android:shell="true" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

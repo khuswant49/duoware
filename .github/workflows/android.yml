@@ -1,0 +1,111 @@
+# Builds the phone app on GitHub's runners (M2 plan, step 2): the cloud sessions have no Android SDK, so this
+# workflow is the Android build. It compiles the C++ part (NDK + CMake + OpenCV from Maven Central), runs the JVM unit
+# tests and uploads the APKs: debug (instrumented tests), release (measurements) and the instrumentation test APK.
+# Instrumented tests themselves need the phone: the owner runs them (README "Installing a CI build").
+name: android
+
+on:
+  push:
+    paths:
+      - "android/**"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Must equal ndkVersion and externalNativeBuild.cmake.version in android/app/build.gradle.kts.
+  NDK_VERSION: "27.3.13750724"
+  CMAKE_VERSION: "3.31.6"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Install NDK and CMake (versions from build.gradle.kts)
+        run: |
+          set -eu
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then SDKMANAGER="$(command -v sdkmanager)"; fi
+          grep -q "ndkVersion = \"${NDK_VERSION}\"" android/app/build.gradle.kts
+          grep -q "version = \"${CMAKE_VERSION}\"" android/app/build.gradle.kts
+          "$SDKMANAGER" --install "ndk;${NDK_VERSION}" "cmake;${CMAKE_VERSION}"
+
+      - name: Shared test signing key
+        id: key
+        env:
+          KEYSTORE_B64: ${{ secrets.DUO_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.DUO_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.DUO_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.DUO_KEY_PASSWORD }}
+        run: |
+          set -eu
+          if [ -n "$KEYSTORE_B64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/duo-test.jks"
+            echo "DUO_KEYSTORE_FILE=$RUNNER_TEMP/duo-test.jks" >> "$GITHUB_ENV"
+            echo "used=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Shared test key secrets are absent (forks, or not created yet): building with the runner's debug key."
+            echo "used=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and unit-test
+        working-directory: android
+        env:
+          DUO_KEYSTORE_PASSWORD: ${{ secrets.DUO_KEYSTORE_PASSWORD }}
+          DUO_KEY_ALIAS: ${{ secrets.DUO_KEY_ALIAS }}
+          DUO_KEY_PASSWORD: ${{ secrets.DUO_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon assembleDebug assembleRelease assembleDebugAndroidTest testDebugUnitTest
+
+      - name: Collect APKs and reports
+        if: always()
+        run: |
+          set -u
+          SHORT_SHA="$(git rev-parse --short=7 HEAD)"
+          echo "SHORT_SHA=$SHORT_SHA" >> "$GITHUB_ENV"
+          STAGE="$RUNNER_TEMP/stage"
+          mkdir -p "$STAGE"
+          cp android/app/build/outputs/apk/debug/app-debug.apk "$STAGE/" || true
+          cp android/app/build/outputs/apk/release/app-release.apk "$STAGE/" || true
+          cp android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk "$STAGE/" || true
+          mkdir -p "$STAGE/unit-test-reports"
+          cp -r android/app/build/reports/tests/testDebugUnitTest "$STAGE/unit-test-reports/html" || true
+          cp -r android/app/build/test-results/testDebugUnitTest "$STAGE/unit-test-reports/xml" || true
+          echo "STAGE=$STAGE" >> "$GITHUB_ENV"
+          {
+            echo "### Android build ${SHORT_SHA}"
+            if [ "${{ steps.key.outputs.used }}" = "true" ]; then
+              echo "- Shared test key: **used** (APKs install over builds from any machine that used it)."
+            else
+              echo "- Shared test key: **NOT used** (secrets absent): signed with this runner's debug key, so these APKs will not install over builds signed with the shared key."
+            fi
+            APKSIGNER="$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -name apksigner | sort | tail -1 || true)"
+            if [ -n "$APKSIGNER" ] && [ -f "$STAGE/app-release.apk" ]; then
+              echo "- Release APK certificate: \`$("$APKSIGNER" verify --print-certs "$STAGE/app-release.apk" | grep 'SHA-256' | head -1)\`"
+            fi
+            ls -l "$STAGE"/*.apk | awk '{print "- " $NF " (" $5 " bytes)"}' | sed "s#$STAGE/##"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: duoware-sensor-${{ env.SHORT_SHA }}
+          path: ${{ env.STAGE }}
+          retention-days: 14
+          if-no-files-found: error
