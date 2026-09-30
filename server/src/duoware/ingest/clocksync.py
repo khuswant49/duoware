@@ -11,10 +11,6 @@ import numpy as np
 from duoware.settings import ClockSyncCfg
 
 MIN_FIT_SAMPLES = 4          # PROTOCOL.md §3.3: fit over at least 4 samples, otherwise the lowest-rtt one with b = 0
-# The fitted slope is used only when the chosen samples span at least this fraction of the window. Over shorter
-# spans the ~1 ms asymmetry noise of a sample swamps a crystal's ~30 ppm drift and the slope makes predictions
-# worse (measured with the simulated 0-3 ms one-way jitter); the intercept alone is then the better estimate.
-SLOPE_MIN_WINDOW_FRACTION = 0.25
 NS_PER_S = 1_000_000_000
 NS_PER_MS = 1_000_000
 
@@ -70,7 +66,7 @@ class ClockSync:
                 xm, ym = x.mean(), y.mean()
                 var = float(((x - xm) ** 2).sum())
                 span_ns = float(x.max() - x.min())
-                use_slope = span_ns >= SLOPE_MIN_WINDOW_FRACTION * self._cfg.window_s * NS_PER_S and var > 0
+                use_slope = span_ns >= self._cfg.slope_min_span_fraction * self._cfg.window_s * NS_PER_S and var > 0
                 slope = float(((x - xm) * (y - ym)).sum() / var) if use_slope else 0.0
                 self._fit = (t_ref, theta0 + ym + slope * (0.0 - xm), slope)
         return self._fit

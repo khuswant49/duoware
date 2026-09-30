@@ -21,6 +21,9 @@ max_rtt_ms = 20                 # samples with a longer round trip are discarded
 window_s = 60                   # samples kept for the offset/drift fit
 best_fraction = 0.25            # fit uses this fraction of the window with the lowest RTT
 unsynced_after_s = 5            # no accepted sample for this long -> camera UNSYNCED -> its poses unusable
+# The fitted drift slope is used only when the chosen samples span at least this fraction of window_s; over a shorter
+# span the per-sample path asymmetry (~1 ms) outweighs a crystal's ~30 ppm drift (unitless; M1 P6 measurement).
+slope_min_span_fraction = 0.25
 
 [localization]
 # Anchor fit rules ported from DUO-WARE 1 vision/world.py (1 anchor similarity, 2 affine, >=3 homography+RANSAC).

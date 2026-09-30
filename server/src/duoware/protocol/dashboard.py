@@ -123,7 +123,6 @@ class CameraState(_M):
     rx_version: int = 0
     rx_bad_marker: int = 0
     clock: str | None = None
-    perf_ok: bool | None = None
 
 
 class TagState(_M):

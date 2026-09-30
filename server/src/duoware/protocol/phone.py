@@ -112,6 +112,8 @@ def _parse_marker(entry: object, w: int, h: int) -> Marker | None:
 
 def _parse_frame(o: Obj) -> Frame:
     w, h = o.int("w"), o.int("h")
+    if w <= 0 or h <= 0:
+        raise bad("w, h: expected positive sizes")
     scan = o.str("scan")
     if scan not in ("full", "roi"):
         raise bad("scan: expected 'full' or 'roi'")
@@ -122,6 +124,12 @@ def _parse_frame(o: Obj) -> Frame:
             n_bad += 1
         else:
             markers.append(mk)
+    counts: dict[int, int] = {}
+    for mk in markers:
+        counts[mk.id] = counts.get(mk.id, 0) + 1
+    if any(c > 1 for c in counts.values()):              # PROTOCOL.md §2: a repeated ID is ambiguous: drop every entry
+        n_bad += sum(c for c in counts.values() if c > 1)
+        markers = [mk for mk in markers if counts[mk.id] == 1]
     return Frame(o.int("cam"), o.str("sid"), o.int("seq"), o.int("cap_ns"), o.int("exp_ns"), o.int("skew_ns"),
                  o.int("avail_ns"), o.int("sent_ns"), w, h, scan, tuple(o.int_list("searched")),
                  tuple(markers), n_bad)

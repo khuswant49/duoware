@@ -25,9 +25,14 @@ export function App() {
           </button>
         ))}
       </nav>
-      {!s.connected && <p className="warning">Not connected to the server. Retrying…</p>}
+      {s.stale && (
+        <p className="warning stale-banner">
+          {s.connected ? "No live data" : "Not connected to the server"}
+          {s.staleForS !== null ? ` for ${s.staleForS} s` : ""}: what you see is the last known state, not the present. Retrying…
+        </p>
+      )}
       <main>
-        {tab === "live" && <LivePage state={s.state} lastEvents={s.lastEvents} />}
+        {tab === "live" && <LivePage state={s.state} lastEvents={s.lastEvents} stale={s.stale} />}
         {tab === "tags" && <TagsPage state={s.state} />}
         {tab === "events" && <EventsPage lastId={s.state?.system.events_last_id} />}
       </main>

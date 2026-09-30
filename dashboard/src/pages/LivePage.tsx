@@ -11,9 +11,10 @@ const EVENTS_SHOWN = 20;
 interface Props {
   state: StateMsg | null;
   lastEvents: EventRecord[];
+  stale: boolean; // no live data: the map and the camera panel are dimmed (M1 review F2)
 }
 
-export function LivePage({ state, lastEvents }: Props) {
+export function LivePage({ state, lastEvents, stale }: Props) {
   const [layout, setLayout] = useState<Layout | null>(null);
   const [config, setConfig] = useState<ConfigSummary | null>(null);
   const [tagDocs, setTagDocs] = useState<TagEntry[]>([]);
@@ -67,7 +68,7 @@ export function LivePage({ state, lastEvents }: Props) {
   };
 
   return (
-    <div className="live">
+    <div className={`live${stale ? " stale" : ""}`}>
       <div className="live-main">
         <FloorMap layout={layout} state={state} config={config} tagDocs={tagDocs} onToggleNode={onToggleNode} onToggleEdge={onToggleEdge} />
         {error && <p className="error">{error}</p>}

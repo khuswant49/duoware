@@ -49,6 +49,13 @@ allowed_origins = [
     "http://127.0.0.1:5173",
 ]
 
+[monitor]
+# Event-loop lag probe (GET /api/health loop_lag_ms): a task sleeps lag_probe_ms and records how late it wakes.
+# Anything that blocks the loop (calibration refits, later the car links' command refresh) shows up here.
+lag_probe_ms = 100              # probe period (ms); M1 review F12
+stall_ms = 100                  # one overshoot above this logs a `system` event "loop_stall" (at most once a minute)
+window_s = 60                   # window for the p95 / max reported by /api/health
+
 [dashboard]
 # Rate of the "state" snapshot on /ws/dashboard (PROTOCOL.md §6.2).
 state_hz = 20

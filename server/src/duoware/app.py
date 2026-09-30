@@ -43,6 +43,7 @@ def create_app(settings: Settings | None = None, mode: str = "hardware", clock: 
     app.state.started = time.monotonic()
     app.state.mode = mode
     app.state.get_services = get_services
+    app.state.has_services = lambda: "sv" in holder
     install(app)
     dist = dashboard_dir if dashboard_dir is not None else DEFAULT_DASHBOARD_DIR
     if dist.is_dir() and (dist / "index.html").exists():

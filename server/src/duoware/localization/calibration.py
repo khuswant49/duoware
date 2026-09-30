@@ -30,6 +30,7 @@ log = logging.getLogger(__name__)
 Emit = Callable[[str, object, object, dict, str], None]       # (key, value, prev, facts, reason) -> camera event
 CORNERS = 4
 MIN_TAGS_SIMILARITY, MIN_TAGS_HOMOGRAPHY = 1, 3               # DUO-WARE 1: 1 -> similarity, 2 -> affine, >=3 -> homography
+MIN_AGREEING_TAGS = 3                                         # D38: witnesses needed to call one tag "moved"
 MIN_TAGS_OK = 2                                               # fewer used tags = WEAK
 RANSAC_MAX_ITERS = 2000
 
@@ -188,8 +189,11 @@ class CameraCalibration:
         bad = [i for i, r in res.items() if r > tol]
         good = [i for i in placed if i not in bad]
         self.residual_mm = float(np.mean([res[i] for i in (good or placed)]))
-        if bad and len(bad) * 2 <= len(placed) and all(self.floor.tags[i].source == "auto" for i in bad):
-            for i in bad:                               # a few tags moved, the camera did not (D28)
+        # D38: exactly one automatically located tag out of tolerance while at least MIN_AGREEING other tags agree:
+        # it moved, the camera did not. Anything else (two or more tags, too few witnesses, an origin or typed-in tag)
+        # is treated as a camera that moved: a small phone rotation can push several tags out at once.
+        if len(bad) == 1 and len(good) >= MIN_AGREEING_TAGS and self.floor.tags[bad[0]].source == "auto":
+            for i in bad:
                 if self.floor.unplace(i, "moved"):
                     self._emit("floor_tag_moved", i, None, {"cam": self.cam, "residual_mm": round(res[i], 1)},
                                f"floor tag {i} is {res[i]:.0f} mm off the locked fit while the others agree: it moved, locating it again")
@@ -266,6 +270,9 @@ class CameraCalibration:
             return False
         ok_tags = inl.reshape(-1, CORNERS).all(axis=1)
         used = [t for t, ok in zip(seen, ok_tags) if ok]
+        if len(used) < len(seen) and not (len(used) >= MIN_AGREEING_TAGS and len(used) * 2 > len(seen)):
+            log.warning("cam %d: fit refused: only %d of %d floor tags agree", self.cam, len(used), len(seen))
+            return False                                  # D38: too few inliers to call the others "moved"
         for t, ok in zip(seen, ok_tags):
             if not ok and self.floor.unplace(t, "rejected by the fit"):            # D28: moved, the fit is kept
                 self._emit("floor_tag_moved", t, None, {"cam": self.cam},
@@ -290,6 +297,11 @@ class CameraCalibration:
         """Metric refinement: the homography fitted to automatically located positions inherits their errors, so
         adjust the mapping and those positions together until every tag image is a square of its printed size."""
         imgs = {t: np.mean(self._tag_buf[t], axis=0) for t in used if len(self._tag_buf.get(t, ())) > 0}
+        warn = self.size_warn_fraction                   # D37: a tag whose measured size disagrees with its printed
+        for t in list(imgs):                             # size would bend the fit: leave it out (the origin is fixed)
+            tag = self.floor.tags[t]
+            if tag.source != "origin" and abs(side_length_mm(to_floor(self.h, imgs[t])) - tag.size_mm) > warn * tag.size_mm:
+                del imgs[t]
         if len(imgs) < MIN_TAGS_HOMOGRAPHY:
             return
         result = refine_homography(self.h, imgs, self.floor.placed())

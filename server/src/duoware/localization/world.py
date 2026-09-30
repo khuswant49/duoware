@@ -86,6 +86,7 @@ class _Obs:
         self.x = self.y = self.heading = self.capture_ns = self.size_mm = None
         self.size_warn = False
         self.last_seen_ns = 0
+        self.pos_ns = 0                          # server time of the latest position update
         self.best_cam: int | None = None
 
 
@@ -102,6 +103,18 @@ class WorldModel:
         self._sessions: dict[int, Session] = {}
         self._last_frame: dict[int, int] = {}      # cam -> server time (ns) of its latest accepted frame
         self.full_frames_seen = 0                 # for tests: frames that reached the floor-tag logic
+        registry.on_change(self._on_registry_change)
+
+    def _on_registry_change(self, old, new) -> None:
+        """A car bound to another tag, or whose tag changed size, must not keep the old pose or parallax scale."""
+        def binding(snap, name):
+            t = snap.car_tag(name)
+            return None if t is None else (t.id, t.size_mm)
+        with self._lock:
+            for c in self.settings.cars:
+                if binding(old, c.name) != binding(new, c.name):
+                    self._cars.pop(c.name, None)
+                    self._scale.pop(c.name, None)
 
     # ------------------------------------------------------------------------------ calibration access
 
@@ -153,6 +166,8 @@ class WorldModel:
             o.last_seen_ns = recv_ns
             if not (calib.usable and synced):
                 continue
+            if not full and self.floor.is_floor(m.id):
+                continue                                        # floor-tag work uses full frames only (PROTOCOL.md §2)
             cap_ns = session.clock_sync.to_server_ns(marker_capture_ns(frame, m), recv_ns)
             if cap_ns is None:
                 continue
@@ -162,6 +177,7 @@ class WorldModel:
                 self._car_pose(tag, fc, calib, cam, cap_ns, tracking)
             o.x, o.y = (float(v) for v in fc.mean(axis=0))
             o.heading, o.capture_ns, o.best_cam = heading_from_corners(fc), cap_ns, cam
+            o.pos_ns = recv_ns
             o.size_mm = side_length_mm(fc)
             printed = tag.size_mm if tag else None
             o.size_warn = bool(tag and self.floor.is_floor(m.id)
@@ -198,8 +214,14 @@ class WorldModel:
         s = self._sessions.get(cam)
         live = s is not None and (self.sessions is None or self.sessions.by_sid(s.sid) is not None)
         mode = s.app_mode if live else None
-        ok = live and calib.usable and s.clock_sync.ok(now_ns) and mode == TRACKING_MODE
+        ok = live and calib.status == CalibStatus.OK and s.clock_sync.ok(now_ns) and mode == TRACKING_MODE   # D39: WEAK never
         return bool(ok), mode
+
+    def _positions_ok(self, cam: int, now_ns: int) -> bool:
+        """The camera can place tags on the floor right now: calibrated (OK or WEAK), synced, session live."""
+        c, s = self.calibs.get(cam), self._sessions.get(cam)
+        live = s is not None and (self.sessions is None or self.sessions.by_sid(s.sid) is not None)
+        return bool(c is not None and c.usable and live and s.clock_sync.ok(now_ns))
 
     def snapshot(self, now_ns: int | None = None) -> WorldSnapshot:
         now = self.clock.mono_ns() if now_ns is None else now_ns
@@ -216,8 +238,14 @@ class WorldModel:
                 live_cams = tuple(sorted(k for k in o.cams if now - self._last_frame.get(k, -stale_ns * 2) <= stale_ns))
                 if not live_cams and self.registry.snapshot().get(tid) is None:
                     continue                                    # an unregistered tag not seen recently
-                tags[tid] = TagObs(tid, bool(live_cams), live_cams, o.x, o.y, o.heading, o.capture_ns, o.size_mm,
-                                   o.size_warn, o.last_seen_ns)
+                x, y, hdg, cap_ns, size = o.x, o.y, o.heading, o.capture_ns, o.size_mm
+                if live_cams:
+                    # PROTOCOL.md §6.2: floor fields are null while no calibrated, synced camera sees the tag. A moving
+                    # tag's position also ages out; floor tags are only updated by full scans, so they do not.
+                    fresh = now - o.pos_ns <= stale_ns or self.floor.is_floor(tid)
+                    if not (fresh and any(self._positions_ok(k, now) for k in live_cams)):
+                        x = y = hdg = cap_ns = size = None
+                tags[tid] = TagObs(tid, bool(live_cams), live_cams, x, y, hdg, cap_ns, size, o.size_warn, o.last_seen_ns)
             cars = {}
             for name, (tid, x, y, hdg, cap, cam, tracking) in self._cars.items():
                 age_ms = (now - cap) / NS_PER_MS

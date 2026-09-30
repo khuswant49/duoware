@@ -30,7 +30,7 @@ milestone by milestone ([roadmap](docs/plans/ROADMAP.md)).
 2. **Server:**
    ```bash
    python -m venv server/.venv
-   server/.venv/Scripts/python -m pip install -e "server[dev]"
+   server/.venv/Scripts/python -m pip install -e "server[dev]"   # also installs psutil (real netmasks for the beacon)
    ```
 3. **Dashboard:**
    ```bash

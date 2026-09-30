@@ -15,3 +15,12 @@ def set_timer_resolution(ms: int = RESOLUTION_MS) -> bool:
         return True
     except Exception:
         return False
+
+
+def release_timer_resolution(ms: int = RESOLUTION_MS) -> None:
+    """Undoes `set_timer_resolution` (Windows keeps the finer timer until the process ends or this is called)."""
+    if sys.platform == "win32":
+        try:
+            ctypes.windll.winmm.timeEndPeriod(ms)            # type: ignore[attr-defined]
+        except Exception:
+            pass

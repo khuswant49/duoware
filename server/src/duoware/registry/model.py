@@ -1,4 +1,4 @@
-"""Tag documents and their validation (PROTOCOL.md Â§7.3, Â§7.4).
+"""Tag documents and their validation (PROTOCOL.md §7.3, §7.4).
 
 `parse_body` checks one document on its own (codes `validation`, `bad_tag_id`); `check_conflicts` checks the
 rules that involve other tags over a whole resulting set (`unknown_car`, `car_already_bound`,
@@ -15,14 +15,14 @@ from duoware.errors import DuoError
 from duoware.store.db import TAG_ID_MAX
 
 ROLES = ("car", "node", "anchor", "obstacle", "ignore")
-FLOOR_ROLES = ("node", "anchor")                          # PROTOCOL.md Â§7.3
-MOTION_ROLES = ("car", "node", "anchor")                  # PROTOCOL.md Â§7.4 safety rule
+FLOOR_ROLES = ("node", "anchor")                          # PROTOCOL.md §7.3
+MOTION_ROLES = ("car", "node", "anchor")                  # PROTOCOL.md §7.4 safety rule
 STATION_KINDS = ("pickup", "dropoff", "home", "charging", "custom")
-SIZE_MM_RANGE = (10.0, 500.0)                             # PROTOCOL.md Â§7.4 size_mm
-LABEL_MAX = 40                                            # PROTOCOL.md Â§7.4 label
-STATION_NAME_MAX = 24                                     # PROTOCOL.md Â§7.4 station.name
-RADIUS_MM_RANGE = (0.0, 1000.0)                           # PROTOCOL.md Â§7.4 radius_mm
-ORIGIN_POSE = (0.0, 0.0, -90.0)                           # PROTOCOL.md Â§0: origin tag centre, TOP edge to -y
+SIZE_MM_RANGE = (10.0, 500.0)                             # PROTOCOL.md §7.4 size_mm
+LABEL_MAX = 40                                            # PROTOCOL.md §7.4 label
+STATION_NAME_MAX = 24                                     # PROTOCOL.md §7.4 station.name
+RADIUS_MM_RANGE = (0.0, 1000.0)                           # PROTOCOL.md §7.4 radius_mm
+ORIGIN_POSE = (0.0, 0.0, -90.0)                           # PROTOCOL.md §0: origin tag centre, TOP edge to -y
 
 COMMON_KEYS = {"id", "role", "size_mm", "label"}
 ROLE_KEYS: dict[str, set[str]] = {
@@ -32,7 +32,7 @@ ROLE_KEYS: dict[str, set[str]] = {
     "obstacle": {"radius_mm"},
     "ignore": set(),
 }
-READ_ONLY_KEYS = {"placed", "version", "updated_wall_ms", "updated_by", "expected_version"}   # PROTOCOL.md Â§7.4
+READ_ONLY_KEYS = {"placed", "version", "updated_wall_ms", "updated_by", "expected_version"}   # PROTOCOL.md §7.4
 
 
 class RegistryError(DuoError):
@@ -135,7 +135,7 @@ class TagDoc:
         return d
 
     def to_json(self) -> dict:
-        """The Â§7.4 document as returned by the API (without live fields)."""
+        """The §7.4 document as returned by the API (without live fields)."""
         d = self.to_body()
         d.update(version=self.version, updated_wall_ms=self.updated_wall_ms, updated_by=self.updated_by)
         return d

@@ -11,6 +11,7 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",   # includes the websockets package (used by the simulator's phone client)
     "numpy>=2.1",
+    "psutil>=5.9",    # real interface netmasks for the discovery beacon (DECISIONS.md D5)
     "opencv-python-headless>=4.10",  # anchor fits (homography / affine / similarity with RANSAC)
 ]
 

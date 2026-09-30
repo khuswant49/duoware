@@ -51,6 +51,8 @@ main { padding: 12px; }
 .panel h3 { margin: 0 0 6px; font-size: 15px; }
 .live { display: grid; grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr); gap: 12px; }
 @media (max-width: 1000px) { .live { grid-template-columns: 1fr; } }
+.live.stale .floor-map, .live.stale .camera-panel, .live.stale .cars { opacity: 0.35; filter: grayscale(1); }
+.stale-banner { font-weight: 700; }
 .floor-map { width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
 .footprint { fill: rgba(107, 91, 214, 0.06); stroke: var(--info); stroke-dasharray: 4 4; }
 .edge { cursor: pointer; }

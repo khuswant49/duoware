@@ -15,7 +15,6 @@ from harness import ServerHarness, SimRig, make_scenario
 
 from duoware.localization.geometry import wrap_deg
 from duoware.protocol.dashboard import Layout
-from duoware.sim.timing import set_timer_resolution
 
 pytestmark = [pytest.mark.e2e, pytest.mark.asyncio]
 
@@ -61,7 +60,6 @@ def strip_live(doc: dict) -> dict:
 
 
 async def test_server_and_simulator_end_to_end(tmp_path):
-    set_timer_resolution()
     data = tmp_path / "data"
     t_start = time.monotonic()
     async with ServerHarness(data) as h:

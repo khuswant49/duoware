@@ -14,6 +14,7 @@ from duoware.ingest.camera_settings import build_camera_settings
 from duoware.ingest.overrides import CameraOverrides
 from duoware.ingest.sessions import PhoneSessions
 from duoware.ingest.udp import FramesEndpoint
+from duoware.monitor import LoopLagMonitor
 from duoware.layout.service import LayoutService
 from duoware.localization.floor_tags import FloorTags
 from duoware.localization.world import WorldModel
@@ -56,6 +57,7 @@ class Services:
     presets: VenuePresets
     endpoint: FramesEndpoint
     beacon: BeaconSender | None
+    monitor: LoopLagMonitor
     broadcaster: Broadcaster = field(init=False)
     ports: dict[str, int] = field(default_factory=dict)       # http / frames / tcp / beacon, as actually bound
     phone_sockets: dict[str, WebSocket] = field(default_factory=dict)
@@ -82,8 +84,9 @@ class Services:
                  "tcp": settings.server.tcp.frames_port, "beacon": settings.server.udp.beacon_port}
         beacon = BeaconSender(settings, db.server_id, interfaces_fn or interfaces,
                               lambda: (ports["http"], ports["frames"], ports["tcp"]))
+        monitor = LoopLagMonitor(settings.server.monitor, clock, events)
         sv = Services(settings, clock, mode, db, events, safety, registry, overrides, floor, sessions, world, layout,
-                      presets, endpoint, beacon, ports=ports)
+                      presets, endpoint, beacon, monitor, ports=ports)
         sv.broadcaster = Broadcaster(sv)
         overrides.on_change(lambda _new: sv.push_settings())
         registry.on_change(sv._on_registry_change)
@@ -127,6 +130,7 @@ class Services:
             self.beacon.start()
         self._tasks.append(loop.create_task(self._session_ticker()))
         self.broadcaster.start()
+        self.monitor.start()
         self.events.log("system", key="server", value="started", facts={"mode": self.mode, "ports": dict(self.ports)},
                         reason="server started")
 
@@ -140,6 +144,7 @@ class Services:
 
     async def stop(self) -> None:
         self.events.log("system", key="server", value="stopped", reason="server stopped")
+        await self.monitor.stop()
         await self.broadcaster.stop()
         if self.beacon is not None:
             await self.beacon.stop()

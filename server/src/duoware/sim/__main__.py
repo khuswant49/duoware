@@ -13,7 +13,7 @@ from duoware.sim.car_server import CarServer
 from duoware.sim.phone import SimPhone
 from duoware.sim.scenario import load_scenario
 from duoware.sim.script import ScriptDriver
-from duoware.sim.timing import set_timer_resolution
+from duoware.sim.timing import release_timer_resolution, set_timer_resolution
 from duoware.sim.world import SimWorld
 
 STATUS_EVERY_S = 10          # how often the console prints a one-line summary
@@ -61,6 +61,8 @@ def main() -> None:
         asyncio.run(amain(args.scenario))
     except KeyboardInterrupt:
         print("stopped")
+    finally:
+        release_timer_resolution()
 
 
 if __name__ == "__main__":
