@@ -1,0 +1,163 @@
+{
+ "_comment": "Copied verbatim from PROTOCOL.md section 6.2 (the server-side test test_protocol_examples.py guards the document itself). If PROTOCOL.md changes, regenerate this file and update src/api/types.ts.",
+ "v": 1,
+ "t": "state",
+ "seq": 1042,
+ "wall_ms": 1790000000000,
+ "system": {
+  "estop": false,
+  "estop_since_wall_ms": null,
+  "estop_by": null,
+  "mode": "sim",
+  "registry_version": 7,
+  "layout_version": 3,
+  "events_last_id": 1234
+ },
+ "cameras": [
+  {
+   "cam": 1,
+   "online": true,
+   "model": "realme RMX3393",
+   "app_mode": "tracking",
+   "link": {
+    "mode": "wireless",
+    "transport": "udp",
+    "interface": "wlan0",
+    "wifi": {
+     "band_ghz": 5,
+     "rssi_dbm": -53,
+     "link_mbps": 780
+    },
+    "latency_ms": {
+     "p50": 3.1,
+     "p95": 7.9
+    },
+    "jitter_ms": 1.2,
+    "loss_pct": 0.4,
+    "send_dropped": 0
+   },
+   "sync": {
+    "ok": true,
+    "rtt_ms": 1.8,
+    "samples": 40
+   },
+   "calib": {
+    "status": "OK",
+    "model": "homography",
+    "rms_mm": 1.9,
+    "residual_mm": 2.2,
+    "floor_tags_used": [
+     10,
+     2,
+     11,
+     3,
+     6,
+     4,
+     12,
+     7,
+     13
+    ],
+    "floor_tags_seen": [
+     10,
+     2,
+     11,
+     3,
+     4,
+     12,
+     7,
+     13
+    ]
+   },
+   "fps": 59.7,
+   "fps_target": 60.0,
+   "resolution": [
+    1280,
+    720
+   ],
+   "stages_ms": {
+    "pipeline": {
+     "p50": 28.0,
+     "p95": 34.1
+    },
+    "detect_full": {
+     "p50": 14.2,
+     "p95": 17.9
+    },
+    "detect_roi": {
+     "p50": 1.9,
+     "p95": 2.8
+    },
+    "send": {
+     "p50": 0.3,
+     "p95": 0.6
+    },
+    "cap_to_sent": {
+     "p50": 33.5,
+     "p95": 41.0
+    }
+   },
+   "pose_age_ms": {
+    "p50": 38.2,
+    "p95": 47.0,
+    "max": 65.4,
+    "n": 597
+   },
+   "dropped": 3,
+   "rx_bad": 0,
+   "rx_unauth": 0,
+   "rx_late": 0,
+   "cpu_app_pct": 23.5,
+   "thermal": {
+    "status": 0,
+    "headroom": 0.42,
+    "level": 0,
+    "reason": null
+   },
+   "exposure_ms": 3.0,
+   "iso": 800,
+   "preview_seq": 57,
+   "status_age_ms": 420
+  }
+ ],
+ "tags": [
+  {
+   "id": 10,
+   "role": "anchor",
+   "label": null,
+   "seen": true,
+   "cams": [
+    1
+   ],
+   "x_mm": 0.0,
+   "y_mm": 0.0,
+   "heading_deg": -90.0,
+   "age_ms": 61,
+   "size_mm": 90.3,
+   "size_warn": false,
+   "placed": true
+  }
+ ],
+ "cars": [
+  {
+   "name": "DUO-A",
+   "tag": 1,
+   "color": "#e4572e",
+   "link": {
+    "state": "disconnected",
+    "rtt_ms": null,
+    "fw": null
+   },
+   "pose": {
+    "x_mm": 3.2,
+    "y_mm": -1.7,
+    "heading_deg": 7.4,
+    "age_ms": 64,
+    "fresh": true,
+    "at_node": 10
+   },
+   "motion": null,
+   "stopped_reason": "no_link",
+   "battery": "not_measured"
+  }
+ ]
+}

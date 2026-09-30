@@ -1,32 +1,36 @@
-import { useEffect, useState } from "react";
-import { fetchHealth, protocolMatches, type Health } from "./api/health";
+import { useState } from "react";
+import { useServerState } from "./api/useServerState";
+import { SystemBar } from "./components/SystemBar";
+import { EventsPage } from "./pages/EventsPage";
+import { LivePage } from "./pages/LivePage";
+import { TagsPage } from "./pages/TagsPage";
 
-/** M0 skeleton: shows whether the server is reachable. The real layout arrives in M1. */
+type Tab = "live" | "tags" | "events";
+const TABS: { id: Tab; label: string }[] = [
+  { id: "live", label: "Live" },
+  { id: "tags", label: "Tags" },
+  { id: "events", label: "Events" },
+];
+
 export function App() {
-  const [health, setHealth] = useState<Health | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const ctl = new AbortController();
-    fetchHealth(ctl.signal)
-      .then(setHealth)
-      .catch((e: unknown) => {
-        if (!ctl.signal.aborted) setError(String(e));
-      });
-    return () => ctl.abort();
-  }, []);
-
+  const s = useServerState();
+  const [tab, setTab] = useState<Tab>("live");
   return (
-    <main style={{ fontFamily: "system-ui, sans-serif", padding: 24 }}>
-      <h1>DUO-WARE 2</h1>
-      {health && (
-        <p>
-          Server {health.version}, mode <b>{health.mode}</b>, protocol v{health.proto}
-          {!protocolMatches(health) && " (MISMATCH: update the dashboard)"}
-        </p>
-      )}
-      {error && <p style={{ color: "crimson" }}>Server not reachable: {error}</p>}
-      {!health && !error && <p>Connecting...</p>}
-    </main>
+    <div className="app">
+      <SystemBar system={s.state?.system ?? null} connected={s.connected} mismatch={s.mismatch} />
+      <nav className="tabs">
+        {TABS.map((t) => (
+          <button key={t.id} className={tab === t.id ? "active" : ""} onClick={() => setTab(t.id)}>
+            {t.label}
+          </button>
+        ))}
+      </nav>
+      {!s.connected && <p className="warning">Not connected to the server. Retrying…</p>}
+      <main>
+        {tab === "live" && <LivePage state={s.state} lastEvents={s.lastEvents} />}
+        {tab === "tags" && <TagsPage state={s.state} />}
+        {tab === "events" && <EventsPage lastId={s.state?.system.events_last_id} />}
+      </main>
+    </div>
   );
 }
