@@ -1,5 +1,7 @@
 import type { CameraState } from "../api/types";
+import { cameraWarnings } from "./camera";
 import { NOT_MEASURED, int, num, pair, text } from "./fmt";
+import { PreviewImage } from "./PreviewImage";
 
 function Row({ k, v, bad }: { k: string; v: string; bad?: boolean }) {
   return (
@@ -19,10 +21,14 @@ export function CameraPanel({ cam }: { cam: CameraState }) {
     <section className="panel camera-panel">
       <h3>
         Camera {cam.cam} <span className={`pill ${cam.online ? "ok" : "bad"}`}>{cam.online ? "online" : "offline"}</span>
+        {l && <span className="pill mode">{l.mode}</span>}
       </h3>
-      {cam.online && mode !== null && mode !== "tracking" && (
-        <p className="warning">Phone is in {mode} mode: it gives no poses for control.</p>
-      )}
+      {cameraWarnings(cam).map((w) => (
+        <p key={w} className="warning">
+          {w}
+        </p>
+      ))}
+      {cam.online && <PreviewImage cam={cam.cam} seq={cam.preview_seq} />}
       <table>
         <tbody>
           <Row k="Phone" v={text(cam.model)} />
@@ -33,6 +39,9 @@ export function CameraPanel({ cam }: { cam: CameraState }) {
           <Row k="Jitter" v={num(l?.jitter_ms, "ms", 2)} />
           <Row k="Loss" v={num(l?.loss_pct, "%", 2)} />
           <Row k="Sync" v={cam.sync.ok ? `ok, rtt ${num(cam.sync.rtt_ms, "ms", 2)}, ${cam.sync.samples} samples` : "UNSYNCED"} bad={!cam.sync.ok} />
+          <Row k="Sync replies rejected" v={int(cam.sync.rejected)} bad={(cam.sync.rejected ?? 0) > 0} />
+          <Row k="Last frame" v={cam.frame_age_ms === undefined || cam.frame_age_ms === null ? "none yet" : `${num(cam.frame_age_ms, "ms", 0)} ago`} />
+          <Row k="Processing left on" v={cam.processing_on ? cam.processing_on.join(", ") || "none" : NOT_MEASURED} bad={(cam.processing_on?.length ?? 0) > 0} />
           <Row k="Calibration" v={`${cam.calib.status}${cam.calib.model ? ` (${cam.calib.model})` : ""}`} bad={cam.calib.status === "MISALIGNED"} />
           <Row k="Fit rms / residual" v={`${num(cam.calib.rms_mm, "mm")} / ${num(cam.calib.residual_mm, "mm")}`} />
           <Row k="Floor tags used" v={cam.calib.floor_tags_used.join(", ") || "none"} />

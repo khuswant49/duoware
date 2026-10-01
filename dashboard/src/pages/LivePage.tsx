@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { apiGet, apiSend, describeError } from "../api/client";
 import type { ConfigSummary, EventRecord, Layout, StateMsg, TagEntry, TagList } from "../api/types";
+import { BenchmarkTable } from "../components/BenchmarkTable";
 import { CameraPanel } from "../components/CameraPanel";
 import { wallTime } from "../components/fmt";
 import { FloorMap } from "../map/FloorMap";
@@ -92,6 +93,9 @@ export function LivePage({ state, lastEvents, stale }: Props) {
       <aside className="live-side">
         {(state?.cameras ?? []).map((c) => (
           <CameraPanel key={c.cam} cam={c} />
+        ))}
+        {(state?.cameras ?? []).map((c) => (
+          <BenchmarkTable key={`bench-${c.cam}`} cam={c.cam} />
         ))}
         {state && state.cameras.length === 0 && <p className="muted">No camera has paired yet. Pair the phone with the code in the top bar.</p>}
         <section className="panel">

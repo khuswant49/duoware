@@ -88,7 +88,7 @@ export interface CameraState {
   model: string | null;
   app_mode: string | null;
   link: LinkState | null;
-  sync: { ok: boolean; rtt_ms: number | null; samples: number };
+  sync: { ok: boolean; rtt_ms: number | null; samples: number; rejected?: number }; // rejected: from M2 (§3.3)
   calib: CalibState;
   fps: number | null;
   fps_target: number | null;
@@ -110,6 +110,35 @@ export interface CameraState {
   rx_bad_marker?: number;
   clock?: string | null;
   caps?: CameraCaps | null; // GET /api/cameras only
+  frame_age_ms?: number | null; // from M2 (§6.2)
+  processing_on?: string[] | null; // from M2 (§6.2, §4.5)
+}
+
+// PROTOCOL.md §4.7 bench results as the server stores them (§7.2 GET /api/cameras/{cam}/benchmarks)
+export interface BenchResult {
+  resolution?: number[] | null;
+  fps_target?: number | null;
+  pipeline?: string | null;
+  full_scan_every?: number | null;
+  aruco3?: boolean | null;
+  duration_s?: number | null;
+  fps?: number | null;
+  cap_to_sent_ms?: Pct | null;
+  detect_full_ms?: Pct | null;
+  detect_roi_ms?: Pct | null;
+  cpu_app_pct?: number | null;
+  headroom_start?: number | null;
+  headroom_end?: number | null;
+  markers_seen?: number | null;
+}
+
+export interface BenchRun {
+  v: number;
+  t: "bench";
+  cam: number;
+  run_id: string;
+  results: BenchResult[];
+  received_wall_ms: number;
 }
 
 export interface CameraCaps {

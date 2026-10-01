@@ -76,3 +76,10 @@ main { padding: 12px; }
 .editor .buttons { display: flex; gap: 8px; align-items: center; }
 .unassigned-row td { color: var(--muted); }
 table.tags, table.events { background: var(--panel); }
+
+/* M2: camera preview, mode badge, benchmark table */
+.preview { width: 100%; max-width: 480px; border-radius: 4px; background: #000; display: block; margin: 0.4rem 0; }
+.pill.mode { background: #e8eefc; color: #234; margin-left: 0.3rem; }
+.table-scroll { overflow-x: auto; }
+table.bench { font-size: 0.8rem; border-collapse: collapse; }
+table.bench th, table.bench td { padding: 0.15rem 0.4rem; white-space: nowrap; text-align: left; }
