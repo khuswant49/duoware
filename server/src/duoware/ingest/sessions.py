@@ -45,6 +45,7 @@ class Session:
     reply: Callable[[bytes], None] | None = None  # where `sync` requests go: set by the latest accepted frame
                                                   # (UDP: sendto its source; TCP: a framed write on its connection)
     last_seq: int | None = None
+    last_frame_ns: int | None = None             # arrival of the latest accepted frame (PROTOCOL.md §6.2 frame_age_ms)
     sync_sent: dict[int, int] = field(default_factory=dict)      # n -> t1 of requests sent in the last 2 s
     sync_n: int = 0
     synced_before: bool = False
@@ -248,8 +249,16 @@ class PhoneSessions:
             if s.last_status is not None and now - s.last_sample_ns >= STATUS_SAMPLE_S * NS_PER_S:
                 s.last_sample_ns = now
                 st = s.last_status
+                age, link, stats = s.stats.pose_age(), s.link_stats.summary(), s.stats
+                synced = s.clock_sync.ok(now)
                 self._events.log("camera", key="status_sample", value=st.app_mode,
                                  facts={"cam": s.cam, "fps": st.fps, "cpu_app_pct": st.cpu_app_pct,
+                                        "server": {"fps": stats.fps(),
+                                                   "pose_age_ms": {"p50": age.p50, "p95": age.p95, "max": age.max}
+                                                   if synced else None,
+                                                   "latency_ms": {"p50": link.latency_p50_ms,
+                                                                  "p95": link.latency_p95_ms},
+                                                   "jitter_ms": link.jitter_ms, "loss_pct": link.loss_pct},
                                         "thermal": None if st.thermal is None else {"status": st.thermal.status,
                                                                                      "headroom": st.thermal.headroom,
                                                                                      "level": st.thermal.level},

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from fastapi import WebSocket
 
 from duoware.broadcaster import Broadcaster
+from duoware.ingest.adb import AdbReverse
 from duoware.clock import Clock, SystemClock
 from duoware.ingest.beacon import BeaconSender, interfaces
 from duoware.ingest.camera_settings import build_camera_settings
@@ -63,6 +64,7 @@ class Services:
     beacon: BeaconSender | None
     monitor: LoopLagMonitor
     broadcaster: Broadcaster = field(init=False)
+    adb: AdbReverse | None = None          # hardware mode with wired.adb_reverse only (the simulator never runs adb)
     ports: dict[str, int] = field(default_factory=dict)       # http / frames / tcp / beacon, as actually bound
     phone_sockets: dict[str, WebSocket] = field(default_factory=dict)
     previews: dict[int, Preview] = field(default_factory=dict)
@@ -94,6 +96,8 @@ class Services:
         sv = Services(settings, clock, mode, db, events, safety, registry, overrides, floor, sessions, world, layout,
                       presets, ingest, endpoint, tcp_server, beacon, monitor, ports=ports)
         sv.broadcaster = Broadcaster(sv)
+        if mode == "hardware" and settings.server.wired.adb_reverse:
+            sv.adb = AdbReverse(settings, lambda: (sv.ports["http"], sv.ports["tcp"]), events, clock)
         overrides.on_change(lambda _new: sv.push_settings())
         registry.on_change(sv._on_registry_change)
         return sv
@@ -138,6 +142,8 @@ class Services:
         self._tasks.append(loop.create_task(self._session_ticker()))
         self.broadcaster.start()
         self.monitor.start()
+        if self.adb is not None:
+            self.adb.start()
         self.events.log("system", key="server", value="started", facts={"mode": self.mode, "ports": dict(self.ports)},
                         reason="server started")
 
@@ -152,6 +158,8 @@ class Services:
     async def stop(self) -> None:
         self.events.log("system", key="server", value="stopped", reason="server stopped")
         await self.monitor.stop()
+        if self.adb is not None:
+            await self.adb.stop()
         await self.broadcaster.stop()
         if self.beacon is not None:
             await self.beacon.stop()

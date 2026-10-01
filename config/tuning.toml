@@ -64,6 +64,9 @@ full_scan_every = 10            # full-frame scan at least every N frames (3 Hz 
 roi_margin = 1.5                # window grows by this many tag side lengths on every side of the predicted box
 roi_min_px = 64                 # smallest window edge (ArUco needs the quiet zone around the tag)
 threads = 0                     # detection worker threads; 0 = cores in the fastest CPU cluster
+demote_after_scans = 3          # a tag tracked only because it moved is dropped after this many still full scans (D32)
+corner_refine = "subpix"        # ArUco corner refinement: "subpix" or "none" (PROTOCOL.md §4.4)
+aruco3 = false                  # OpenCV "ArUco 3" fast mode on full scans; off until the M2 benchmark (H7) decides
 
 [phone.thermal]
 # Thermal ladder (PROTOCOL.md §4.4, DECISIONS.md D34): scale down before Android throttles on its own.

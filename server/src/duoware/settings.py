@@ -228,6 +228,9 @@ class PhoneCfg:
     roi_margin: float
     roi_min_px: int
     threads: int
+    demote_after_scans: int
+    corner_refine: str
+    aruco3: bool
     thermal: ThermalCfg
 
 
@@ -281,6 +284,9 @@ def load_env(path: Path | None) -> dict[str, str]:
 # ---------------------------------------------------------------------------------------- validation
 
 
+CORNER_REFINE = ("subpix", "none")      # PROTOCOL.md §4.4 tracking.corner_refine
+
+
 def _validate(server: ServerConfig, cars: tuple[CarConfig, ...], tuning: Tuning) -> None:
     names = [c.name for c in cars]
     if len(set(names)) != len(names):
@@ -296,6 +302,11 @@ def _validate(server: ServerConfig, cars: tuple[CarConfig, ...], tuning: Tuning)
         raise SettingsError("tuning.toml.camera.resolution: two positive integers expected")
     if not 0 <= tuning.clock_sync.slope_min_span_fraction <= 1:
         raise SettingsError("tuning.toml.clock_sync.slope_min_span_fraction: must be in [0, 1]")
+    ph = tuning.phone
+    if ph.corner_refine not in CORNER_REFINE:
+        raise SettingsError(f"tuning.toml.phone.corner_refine: one of {', '.join(CORNER_REFINE)}")
+    if ph.demote_after_scans < 1 or ph.threads < 0:
+        raise SettingsError("tuning.toml.phone: demote_after_scans must be >= 1 and threads >= 0")
     m = server.monitor
     if not (m.lag_probe_ms > 0 and m.stall_ms > 0 and m.window_s > 0):
         raise SettingsError("server.toml.monitor: lag_probe_ms, stall_ms and window_s must be > 0")

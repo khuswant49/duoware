@@ -47,7 +47,8 @@ def camera_state(sv: "Services", cam: int, now_ns: int, world) -> dict[str, Any]
         "cam": cam, "online": s is not None, "model": (s.hello.model if s else None), "app_mode": st.app_mode if st else None,
         "link": link_obj,
         "sync": {"ok": synced, "rtt_ms": _r(s.clock_sync.rtt_ms_min, 2) if s else None,
-                 "samples": s.clock_sync.samples if s else 0},
+                 "samples": s.clock_sync.samples if s else 0,
+                 "rejected": s.clock_sync.rejected(now_ns) if s else 0},
         "calib": calib_info,
         "fps": _r(st.fps, 1) if st else None, "fps_target": st.fps_target if st else None,
         "resolution": list(st.resolution) if st and st.resolution else None, "stages_ms": stages,
@@ -61,6 +62,8 @@ def camera_state(sv: "Services", cam: int, now_ns: int, world) -> dict[str, Any]
         "iso": st.iso if st else None, "preview_seq": None,
         "status_age_ms": _r((now_ns - s.status_at_ns) / NS_PER_MS) if s and s.status_at_ns else None,
         "clock": st.clock if st else None,
+        "frame_age_ms": _r((now_ns - s.last_frame_ns) / NS_PER_MS) if s and s.last_frame_ns else None,
+        "processing_on": list(st.processing_on) if st and st.processing_on is not None else None,
         "caps": caps,
     }
 

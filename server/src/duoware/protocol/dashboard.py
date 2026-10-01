@@ -62,6 +62,7 @@ class SyncState(_M):
     ok: bool
     rtt_ms: float | None
     samples: int
+    rejected: int = 0                   # (from M2) PROTOCOL.md §3.3
 
 
 class CalibState(_M):
@@ -123,6 +124,8 @@ class CameraState(_M):
     rx_version: int = 0
     rx_bad_marker: int = 0
     clock: str | None = None
+    frame_age_ms: float | None = None   # (from M2) PROTOCOL.md §6.2
+    processing_on: list[str] | None = None
 
 
 class TagState(_M):

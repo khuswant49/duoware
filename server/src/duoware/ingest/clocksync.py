@@ -21,11 +21,13 @@ class ClockSync:
         self._samples: deque[tuple[int, int, int]] = deque()      # (t4_ns, theta_ns, rtt_ns)
         self._newest_t4: int | None = None
         self._fit: tuple[int, float, float] | None = None         # (t_ref_ns, theta_ref_ns, slope ns/ns)
+        self._rejected: deque[int] = deque()                        # t4 of discarded replies (PROTOCOL.md §3.3)
 
     def add(self, t1: int, t2: int, t3: int, t4: int) -> bool:
         """One sync exchange. Returns False (sample discarded) for rtt < 0 or rtt > max_rtt_ms."""
         rtt = (t4 - t1) - (t3 - t2)
         if rtt < 0 or rtt > self._cfg.max_rtt_ms * NS_PER_MS:
+            self.note_rejected(t4)
             return False
         theta = ((t2 - t1) + (t3 - t4)) // 2
         self._samples.append((t4, theta, rtt))
@@ -35,6 +37,17 @@ class ClockSync:
             self._samples.popleft()
         self._fit = None
         return True
+
+    def note_rejected(self, t4: int) -> None:
+        """A reply discarded by a §3.3 rule (here, or by the ingest for an unknown or stale `n`)."""
+        self._rejected.append(t4)
+
+    def rejected(self, now_ns: int) -> int:
+        """Replies discarded during the last `window_s` (PROTOCOL.md §3.3 `sync.rejected`)."""
+        horizon = now_ns - int(self._cfg.window_s * NS_PER_S)
+        while self._rejected and self._rejected[0] < horizon:
+            self._rejected.popleft()
+        return len(self._rejected)
 
     @property
     def samples(self) -> int:

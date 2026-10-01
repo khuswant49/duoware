@@ -144,6 +144,9 @@ class Tracking:
     roi_margin: float
     roi_min_px: int
     threads: int
+    demote_after_scans: int
+    corner_refine: str
+    aruco3: bool
 
 
 @dataclass(frozen=True)
@@ -181,7 +184,9 @@ class CameraSettings:
         return {"v": PROTOCOL_VERSION, "t": "settings", "resolution": list(self.resolution), "fps": self.fps,
                 "exposure_ns": self.exposure_ns, "iso": self.iso, "focus": self.focus, "awb": self.awb,
                 "tracking": {"track_ids": list(t.track_ids), "full_scan_every": t.full_scan_every,
-                             "roi_margin": t.roi_margin, "roi_min_px": t.roi_min_px, "threads": t.threads},
+                             "roi_margin": t.roi_margin, "roi_min_px": t.roi_min_px, "threads": t.threads,
+                             "demote_after_scans": t.demote_after_scans, "corner_refine": t.corner_refine,
+                             "aruco3": t.aruco3},
                 "thermal": {"forecast_s": th.forecast_s, "headroom_down": th.headroom_down,
                             "headroom_up": th.headroom_up, "up_after_s": th.up_after_s,
                             "status_down": th.status_down, "fps_steps": list(th.fps_steps),
@@ -198,7 +203,8 @@ class CameraSettings:
         return CameraSettings(
             (res[0], res[1]), o.num("fps"), o.int("exposure_ns"), o.int("iso"), o.str("focus"), o.str("awb"),
             Tracking(tuple(t.int_list("track_ids")), t.int("full_scan_every"), t.num("roi_margin"),
-                     t.int("roi_min_px"), t.int("threads")),
+                     t.int("roi_min_px"), t.int("threads"), t.int("demote_after_scans"), t.str("corner_refine"),
+                     t.bool("aruco3")),
             ThermalPolicy(th.num("forecast_s"), th.num("headroom_down"), th.num("headroom_up"),
                           th.num("up_after_s"), th.int("status_down"), tuple(th.num_list("fps_steps")), steps),
             PreviewSettings(pv.num("fps"), pv.int("width"), pv.int("quality")))
@@ -300,6 +306,7 @@ class Status:
     battery_pct: int | None
     charging: bool | None
     markers_seen: int | None
+    processing_on: tuple[str, ...] | None = None    # (from M2) PROTOCOL.md §4.5; None = not reported
 
     @staticmethod
     def parse(o: Obj) -> "Status":
@@ -320,7 +327,18 @@ class Status:
             PerfState(*(perf.opt_bool(k) for k in ("foreground_service", "wake_lock", "wifi_low_latency",
                                                    "sustained_mode", "hint_session", "battery_opt_exempt")))
             if perf else None,
-            o.opt_int("battery_pct"), o.opt_bool("charging"), o.opt_int("markers_seen"))
+            o.opt_int("battery_pct"), o.opt_bool("charging"), o.opt_int("markers_seen"),
+            _opt_str_tuple(o, "processing_on"))
+
+
+def _opt_str_tuple(o: Obj, key: str) -> tuple[str, ...] | None:
+    """An optional list of strings: absent or null -> None; anything else must be a list of strings."""
+    v = o.d.get(key)
+    if v is None:
+        return None
+    if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+        raise bad(f"{key}: expected a list of strings")
+    return tuple(v)
 
 
 def encode_status(s: Status) -> str:
@@ -337,7 +355,8 @@ def encode_status(s: Status) -> str:
         "perf": None if s.perf is None else {k: getattr(s.perf, k) for k in (
             "foreground_service", "wake_lock", "wifi_low_latency", "sustained_mode", "hint_session",
             "battery_opt_exempt")},
-        "battery_pct": s.battery_pct, "charging": s.charging, "markers_seen": s.markers_seen})
+        "battery_pct": s.battery_pct, "charging": s.charging, "markers_seen": s.markers_seen,
+        **({} if s.processing_on is None else {"processing_on": list(s.processing_on)})})
 
 
 # ----------------------------------------------------------------------------------------- bench

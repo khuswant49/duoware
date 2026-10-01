@@ -11,7 +11,7 @@ from duoware.errors import DuoError
 from duoware.store.db import StateDb
 from duoware.store.events import EventLog
 
-KEYS = ("exposure_ms", "iso", "fps", "resolution", "full_scan_every")
+KEYS = ("exposure_ms", "iso", "fps", "resolution", "full_scan_every", "aruco3", "threads")
 PRESET_KEYS = ("exposure_ms", "iso")          # PROTOCOL.md §7.2 / DECISIONS.md D28: presets carry exposure and ISO
 
 
@@ -35,6 +35,14 @@ def validate_value(key: str, v: Any) -> Any:
     if key in ("iso", "full_scan_every"):
         if isinstance(v, bool) or not isinstance(v, int) or v < 1:
             raise _bad(f"{key} must be an integer >= 1", key)
+        return v
+    if key == "aruco3":
+        if not isinstance(v, bool):
+            raise _bad("aruco3 must be true or false", key)
+        return v
+    if key == "threads":
+        if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+            raise _bad("threads must be an integer >= 0 (0 = the fastest CPU cluster)", key)
         return v
     if key == "resolution":
         if not (isinstance(v, (list, tuple)) and len(v) == 2 and all(isinstance(x, int) and not isinstance(x, bool)

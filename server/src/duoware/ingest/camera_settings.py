@@ -19,7 +19,8 @@ def build_camera_settings(settings: Settings, overrides: dict, registry: TagRegi
         focus=cam.focus, awb=cam.awb,
         tracking=Tracking(tuple(t.id for t in registry.snapshot().car_tags()),
                           int(overrides.get("full_scan_every", phone.full_scan_every)), phone.roi_margin,
-                          phone.roi_min_px, phone.threads),
+                          phone.roi_min_px, int(overrides.get("threads", phone.threads)), phone.demote_after_scans,
+                          phone.corner_refine, bool(overrides.get("aruco3", phone.aruco3))),
         thermal=ThermalPolicy(th.forecast_s, th.headroom_down, th.headroom_up, th.up_after_s, th.status_down,
                               th.fps_steps, th.resolution_steps),
         preview=PreviewSettings(cam.preview_fps, cam.preview_width, cam.preview_jpeg_quality))

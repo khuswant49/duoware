@@ -117,7 +117,7 @@ class FrameIngest:
             return Handled(sess, "rx_late")
         if sess.last_seq is not None:
             sess.stats.dropped += f.seq - sess.last_seq - 1     # PROTOCOL.md §2: seq jumps by k -> dropped += k - 1
-        sess.last_seq = f.seq
+        sess.last_seq, sess.last_frame_ns = f.seq, recv_ns
         sess.reply, sess.transport = reply, transport
         sess.stats.rx_bad_marker += f.bad_markers
         server_sent = sess.clock_sync.to_server_ns(f.sent_ns, recv_ns) if sess.clock_sync.ok(recv_ns) else None
@@ -129,6 +129,7 @@ class FrameIngest:
     def _on_sync_reply(self, sess: Session, r: SyncReply, t4: int) -> None:
         t1 = sess.sync_sent.pop(r.n, None)
         if t1 is None or t1 != r.t1 or t4 - t1 > SYNC_REPLY_MAX_AGE_S * NS_PER_S:
+            sess.clock_sync.note_rejected(t4)
             return
         sess.clock_sync.add(r.t1, r.t2, r.t3, t4)
 
