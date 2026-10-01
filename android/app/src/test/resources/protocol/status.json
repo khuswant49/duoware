@@ -1,0 +1,77 @@
+{
+ "_comment": "Copied from PROTOCOL.md §4.5 (the server's test_protocol_examples guards the source); tests ignore this key.",
+ "v": 1,
+ "t": "status",
+ "cam": 1,
+ "app_mode": "tracking",
+ "clock": "boottime",
+ "link": {
+  "mode": "wireless",
+  "interface": "wlan0",
+  "local_ip": "192.168.1.23",
+  "wifi": {
+   "band_ghz": 5,
+   "rssi_dbm": -53,
+   "link_mbps": 780
+  }
+ },
+ "fps": 59.7,
+ "fps_target": 60.0,
+ "resolution": [
+  1280,
+  720
+ ],
+ "stages_ms": {
+  "pipeline": {
+   "p50": 28.0,
+   "p95": 34.1
+  },
+  "detect_full": {
+   "p50": 14.2,
+   "p95": 17.9
+  },
+  "detect_roi": {
+   "p50": 1.9,
+   "p95": 2.8
+  },
+  "send": {
+   "p50": 0.3,
+   "p95": 0.6
+  },
+  "cap_to_sent": {
+   "p50": 33.5,
+   "p95": 41.0
+  }
+ },
+ "scan": {
+  "full_every": 10,
+  "rois_per_frame": 2.0,
+  "lost_rescans": 3
+ },
+ "frames_skipped": 3,
+ "send_dropped": 0,
+ "exposure_ns": 3000000,
+ "iso": 800,
+ "focus": "locked",
+ "cpu": {
+  "app_pct": 23.5,
+  "max_cur_khz": 2400000
+ },
+ "thermal": {
+  "status": 0,
+  "headroom": 0.42,
+  "level": 0,
+  "reason": null
+ },
+ "perf": {
+  "foreground_service": true,
+  "wake_lock": true,
+  "wifi_low_latency": true,
+  "sustained_mode": false,
+  "hint_session": true,
+  "battery_opt_exempt": true
+ },
+ "battery_pct": 81,
+ "charging": true,
+ "markers_seen": 7
+}

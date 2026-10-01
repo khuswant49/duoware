@@ -1,0 +1,11 @@
+{
+ "_comment": "Copied from PROTOCOL.md §4.2 (the server's test_protocol_examples guards the source); tests ignore this key.",
+ "v": 1,
+ "t": "beacon",
+ "server_id": "a3f9c2d17e804b55",
+ "name": "DUO-WARE",
+ "host": "192.168.42.129",
+ "http_port": 8000,
+ "frames_port": 47801,
+ "frames_tcp_port": 47802
+}

@@ -1,0 +1,8 @@
+{
+ "_comment": "Copied from PROTOCOL.md §3.2 (the server's test_protocol_examples guards the source); tests ignore this key.",
+ "v": 1,
+ "t": "sync",
+ "sid": "9f2c4e1a7b3d5c60",
+ "n": 123,
+ "t1": 5512345678901
+}

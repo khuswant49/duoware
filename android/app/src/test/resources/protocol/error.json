@@ -1,0 +1,7 @@
+{
+ "_comment": "Copied from PROTOCOL.md §4.3 (the server's test_protocol_examples guards the source); tests ignore this key.",
+ "v": 1,
+ "t": "error",
+ "code": "bad_pair_code",
+ "message": "Pairing code is wrong or expired."
+}

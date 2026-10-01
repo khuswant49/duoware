@@ -1,0 +1,104 @@
+{
+ "_comment": "Copied from PROTOCOL.md §4.3 (the server's test_protocol_examples guards the source); tests ignore this key.",
+ "v": 1,
+ "t": "hello",
+ "device_id": "5b1e0f5e-8a8c-4f53-9b0e-2f4c1f2a6c11",
+ "token": null,
+ "pair_code": "K7QX-M2",
+ "app_version": "0.2.0",
+ "model": "realme RMX3393",
+ "android": "13",
+ "sdk": 33,
+ "link": {
+  "mode": "wireless",
+  "interface": "wlan0",
+  "local_ip": "192.168.1.23",
+  "wifi": {
+   "band_ghz": 5,
+   "rssi_dbm": -51,
+   "link_mbps": 866
+  }
+ },
+ "cpu": {
+  "cores": 8,
+  "max_khz": [
+   2000000,
+   2000000,
+   2000000,
+   2000000,
+   2000000,
+   2000000,
+   2500000,
+   2500000
+  ]
+ },
+ "camera": {
+  "id": "0",
+  "hw_level": "FULL",
+  "capabilities": [
+   "MANUAL_SENSOR",
+   "READ_SENSOR_SETTINGS",
+   "BURST_CAPTURE"
+  ],
+  "ts_source": "REALTIME",
+  "exposure_ns_range": [
+   10000,
+   500000000
+  ],
+  "iso_range": [
+   100,
+   6400
+  ],
+  "fps_ranges": [
+   [
+    15,
+    30
+   ],
+   [
+    30,
+    30
+   ],
+   [
+    60,
+    60
+   ]
+  ],
+  "yuv_sizes": [
+   [
+    1920,
+    1080,
+    30.0
+   ],
+   [
+    1280,
+    720,
+    60.0
+   ],
+   [
+    640,
+    480,
+    120.0
+   ]
+  ],
+  "rolling_shutter_skew": true,
+  "min_focus_diopters": 10.0,
+  "intrinsics": [
+   1402.1,
+   1402.1,
+   640.3,
+   361.0,
+   0.0
+  ],
+  "distortion": [
+   0.021,
+   -0.043,
+   0.0,
+   0.0,
+   0.0
+  ],
+  "active_array": [
+   4080,
+   3072
+  ]
+ }
+}
