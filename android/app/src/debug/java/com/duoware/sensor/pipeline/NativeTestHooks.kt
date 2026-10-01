@@ -13,4 +13,14 @@ object NativeTestHooks {
 
     /** Draws marker [markerId] (DICT_4X4_50, [sidePx] px) on a grey frame, runs the detector, returns the IDs found. */
     external fun detectGeneratedMarker(markerId: Int, sidePx: Int): IntArray
+
+    /**
+     * Renders a synthetic frame into [out] (direct, [rowStride] bytes per row): per marker in [spec] (n x [id, cx, cy,
+     * side px, angle deg]) a DICT_4X4_50 marker drawn at [superSample] x resolution and area-averaged down, then an
+     * optional motion blur of [blurPx] px along [blurAngleDeg]. Returns the true corners (n x 8, ArUco order).
+     */
+    external fun renderScene(
+        spec: FloatArray, superSample: Int, blurPx: Float, blurAngleDeg: Float, out: java.nio.ByteBuffer, w: Int,
+        h: Int, rowStride: Int,
+    ): FloatArray
 }

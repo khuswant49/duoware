@@ -24,7 +24,7 @@ else()
   set(DUO_OPENCV_LIBS ${OpenCV_LIBS})
 endif()
 
-set(DUO_SOURCES jni_bridge.cpp)
+set(DUO_SOURCES jni_bridge.cpp pipeline.cpp roi_tracker.cpp detector.cpp)
 
 add_library(duosensor SHARED ${DUO_SOURCES})
 
