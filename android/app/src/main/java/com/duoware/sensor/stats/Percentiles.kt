@@ -11,6 +11,7 @@ class Percentiles(private val capacity: Int, private val windowMs: Long) {
     private var head = 0           // next write position
     private var size = 0
 
+    @Synchronized
     fun add(nowMs: Long, value: Float) {
         times[head] = nowMs
         values[head] = value
@@ -29,9 +30,11 @@ class Percentiles(private val capacity: Int, private val windowMs: Long) {
         return n
     }
 
+    @Synchronized
     fun count(nowMs: Long): Int = collect(nowMs)
 
     /** Fills [out] with p50 at [0] and p95 at [1]; returns false (out untouched) when the window is empty. */
+    @Synchronized
     fun p50p95(nowMs: Long, out: FloatArray): Boolean {
         val n = collect(nowMs)
         if (n == 0) return false
