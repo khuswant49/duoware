@@ -22,6 +22,10 @@ class ImageMailbox<T : AutoCloseable> {
     @Volatile var skipped = 0L
         private set
 
+    /** Images the camera delivered to [put], processed or not (the sensor's real frame rate). */
+    @Volatile var received = 0L
+        private set
+
     /** Counts frames the sensor delivered but the app never saw (a timestamp gap), see [CameraController]. */
     fun addSkipped(n: Long) {
         skipped += n
@@ -30,6 +34,7 @@ class ImageMailbox<T : AutoCloseable> {
     fun put(image: T, availNs: Long) {
         var old: T? = null
         lock.withLock {
+            received++
             if (closed) {
                 old = image
             } else {

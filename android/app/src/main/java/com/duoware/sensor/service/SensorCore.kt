@@ -88,6 +88,7 @@ class SensorCore(private val ctx: Context) : Session.Listener, CameraController.
     private var governor: ThermalGovernor? = null
     private var appliedLevel = -1
     private var holdForCode = false
+    private var cameraErrors = 0
     private var ticker: java.util.concurrent.ScheduledFuture<*>? = null
     private var lastFrames = 0L
     private var lastTickMs = 0L
@@ -143,13 +144,14 @@ class SensorCore(private val ctx: Context) : Session.Listener, CameraController.
 
     /** The user changed mode, camera, manual host or pair code: a new session in the new setting. */
     @Synchronized
-    fun restart(pairCodeEntered: String? = null) {
+    fun restart(pairCodeEntered: String? = null, delayMs: Long = 0) {
         if (!running) return
         if (pairCodeEntered != null) { pairCode = pairCodeEntered; holdForCode = false }
+        if (delayMs == 0L) cameraErrors = 0                      // a restart by the user starts the error count again
         discovery.stop()
         endSession()
         linkState = "searching"
-        discovery.start(0)
+        discovery.start(delayMs)
     }
 
     fun refocus() = controller.refocus()
@@ -211,7 +213,10 @@ class SensorCore(private val ctx: Context) : Session.Listener, CameraController.
         if (s.tracking != old.tracking) pipeline.configure(s.tracking)
         if (s.resolution != old.resolution || s.fps != old.fps || s.thermal != old.thermal) {
             val base = Sizes.pick(c.yuvSizes, s.resolution) ?: s.resolution
-            governor = ThermalGovernor(s.thermal, Sizes.effectiveFps(c.yuvSizes, base, s.fps) ?: DEFAULT_FPS, base)
+            val g = ThermalGovernor(s.thermal, Sizes.effectiveFps(c.yuvSizes, base, s.fps) ?: DEFAULT_FPS, base)
+            governor?.level?.let { g.resume(it.index, it.reason) }          // same heat, same ladder position
+            governor = g
+            appliedLevel = -1
             startCamera()
         } else if (s.exposureNs != old.exposureNs || s.iso != old.iso) {
             controller.update(governor?.level?.fps ?: 0.0, s.exposureNs, s.iso)
@@ -239,6 +244,7 @@ class SensorCore(private val ctx: Context) : Session.Listener, CameraController.
     // ------------------------------------------------------------------------------------------- camera
 
     override fun onReady(active: CameraController.Active) {
+        cameraErrors = 0
         pipeline.fallbackExposureNs = active.exposureNs
         perf.startHint(intArrayOf(runner.tid) + pipeline.workerTids(), active.frameDurationNs)
     }
@@ -249,7 +255,13 @@ class SensorCore(private val ctx: Context) : Session.Listener, CameraController.
             linkState = "needs camera permission"; discovery.stop(); endSession()
             return
         }
-        restart()
+        // a failing camera must not reconnect every second for ever: back off 1, 2, 4 ... 30 s, then stop and show the error
+        cameraErrors++
+        if (cameraErrors > MAX_CAMERA_RETRIES) {
+            linkState = "camera error (stopped)"; discovery.stop(); endSession()
+            return
+        }
+        restart(delayMs = minOf(RETRY_MS shl (cameraErrors - 1), MAX_BACKOFF_MS))
     }
 
     // ------------------------------------------------------------------------------------------- 1 Hz
@@ -318,6 +330,8 @@ class SensorCore(private val ctx: Context) : Session.Listener, CameraController.
         private const val TAG = "SensorCore"
         private const val RETRY_MS = 1000L                       // PROTOCOL.md §4.3: discovery again after 1 s
         private const val DEFAULT_FPS = 30.0
+        private const val MAX_CAMERA_RETRIES = 6
+        private const val MAX_BACKOFF_MS = 30_000L
         private const val DEFAULT_FORECAST_S = 10.0
     }
 }

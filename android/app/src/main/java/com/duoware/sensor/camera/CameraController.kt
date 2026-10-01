@@ -360,7 +360,8 @@ class CameraController(
             publish()
         }
         val availNs = clock.now()
-        val dur = frameDurationNs
+        // the frame duration the HAL reports for this capture (it may keep 33 ms when 16.7 ms was asked for), else the requested one
+        val dur = meta.frameDurationNs(ts).takeIf { it > 0 } ?: frameDurationNs
         if (lastTs != 0L && dur > 0 && ts - lastTs > dur * GAP_FACTOR) {
             mailbox.addSkipped(Math.round((ts - lastTs).toDouble() / dur) - 1)      // frames the sensor made that never reached us
         }

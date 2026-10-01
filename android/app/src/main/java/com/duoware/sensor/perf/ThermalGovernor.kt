@@ -39,6 +39,14 @@ class ThermalGovernor(
         }
     }
 
+    /**
+     * Keeps the ladder position across a rebuild (new base fps / resolution or policy from a `settings` message): the
+     * phone is as hot as it was, so it must not jump back to level 0. Clamped to the new ladder.
+     */
+    fun resume(index: Int, reason: String?) {
+        level = levelAt(index.coerceIn(0, maxLevel), reason)
+    }
+
     /** One reading. [headroom] is null when the device has no headroom API, NaN when it had no reading. */
     fun tick(nowMs: Long, headroom: Double?, status: Int): Level {
         val h = effectiveHeadroom(nowMs, headroom)

@@ -67,4 +67,17 @@ class ThermalGovernorTest {
         g2.tick(0, 0.90, 0)
         assertEquals(1, g2.tick(10_001, Double.NaN, 0).index)       // too old: no reading, status 0 -> not hot
     }
+
+    @Test
+    fun resumeKeepsTheLadderPositionAcrossARebuildAndClampsIt() {
+        val g = gov()
+        g.tick(0, 0.90, 0); g.tick(11_000, 0.90, 0)                   // level 2
+        val rebuilt = ThermalGovernor(policy, 30.0, 1920 to 1080)       // new base from a `settings` message
+        rebuilt.resume(g.level.index, g.level.reason)
+        assertEquals(2, rebuilt.level.index)
+        assertEquals(15.0, rebuilt.level.fps, 1e-9)                    // 30 fps base x 0.5
+        val shorter = ThermalGovernor(policy.copy(fpsSteps = listOf(1.0), resolutionSteps = emptyList()), 30.0, 1280 to 720)
+        shorter.resume(3, "x")
+        assertEquals(0, shorter.level.index)                            // clamped to the new ladder
+    }
 }

@@ -100,22 +100,24 @@ class CameraControllerTest {
             val a = active!!
             pipeline.fallbackExposureNs = a.exposureNs
             val f0 = pipeline.frames
+            val r0 = mailbox.received
             val t0 = System.nanoTime()
             Thread.sleep(MEASURE_MS)
             val frames = pipeline.frames - f0
             val seconds = (System.nanoTime() - t0) / 1e9
             val fps = frames / seconds
+            val deliveredFps = (mailbox.received - r0) / seconds
             val out = FloatArray(2)
             val nowMs = clock.now() / 1_000_000
             val line = StringBuilder()
             for (s in StageStats.Stage.entries) {
                 line.append(if (pipeline.stats.get(s, nowMs, out)) String.format(Locale.ROOT, "%s %.2f/%.2f; ", s.wire, out[0], out[1]) else "${s.wire} none; ")
             }
-            report("camera", "${choice.label}; size ${a.size}; target ${"%.1f".format(Locale.ROOT, a.fps)} fps; achieved ${"%.1f".format(Locale.ROOT, fps)} fps " +
+            report("camera", "${choice.label}; size ${a.size}; target ${"%.1f".format(Locale.ROOT, a.fps)} fps; achieved ${"%.1f".format(Locale.ROOT, fps)} fps (camera delivered ${"%.1f".format(Locale.ROOT, deliveredFps)} fps) " +
                 "($frames frames in ${"%.1f".format(Locale.ROOT, seconds)} s); skipped ${mailbox.skipped}; meta misses ${meta.misses}")
             report("exposure", "requested 3.000 ms, result ${"%.3f".format(Locale.ROOT, controller.lastExposureNs / 1e6)} ms; iso ${a.iso}; manual ${a.manualSensor}")
             report("focus_awb", "focus ${a.focus}; awb locked ${a.awbLocked}; processing_on ${a.processingOn}")
-            report("clock", "${a.clockName} (frame duration ${a.frameDurationNs} ns)")
+            report("clock", "${a.clockName} (requested frame duration ${a.frameDurationNs} ns; the capture results report ${meta.frameDurationNs(0)} ns)")
             report("stages_ms_p50_p95", line.toString())
             assertTrue("sync clock decided (was ${a.clockName})", a.clockName != "unknown")
             assertTrue("frames flow: $fps fps", fps >= MIN_FPS)

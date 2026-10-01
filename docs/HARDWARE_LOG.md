@@ -64,3 +64,19 @@ Setup: `connectedDebugAndroidTest` with a single class per run, debug build, pho
 - `CameraControllerTest.capabilitiesOfEveryBackCameraAreReadable`: pass. Camera 0 (5.6 mm main): LEVEL_3, MANUAL_SENSOR, ts REALTIME, exposure 0.1 ms–32 s, ISO 100–6400, 1280x720 up to 60 fps, 1920x1080 up to 60 fps, no rolling-shutter skew, intrinsics and distortion `null`. Camera 1 (3.5 mm): FULL, ISO 100–1600, 1280x720 up to 30 fps.
 - `CameraControllerTest.streamsFramesAtTheMaximumRateWithAManualExposure`: **not run** (skipped). The realme refuses `pm grant` and the test runner's runtime grant of CAMERA (`SecurityException`, GRANT_RUNTIME_PERMISSIONS), so the permission has to be granted by hand once through the app's settings; the app has no permission screen until step 10.
 - `FrameSenderTest` (step 9, loopback): 2/2 pass. UDP: frame arrives with `sent_ns` stamped, `sync` answered on the same channel, loopback sync round trip 0.97 ms. TCP: length-framed frame, `sync_r` on the same connection, reconnect after the server closed it in 57 ms.
+
+## 2026-10-01 — M2 after step 10: camera test and end-to-end smoke test (realme RMX3392, Android 14, USB)
+
+**`CameraControllerTest` (instrumented, debug build, no tags in view, 1280x720, exposure 3 ms, ISO 800):** 2/2 pass.
+- Camera 0 (5.6 mm, the lens with 60 fps in `yuv_sizes`): asked 60 fps, **the camera delivered 30.0 fps** (150 frames in 5.0 s; counted at the mailbox, so it is the sensor/HAL, not the pipeline). The capture results report `SENSOR_FRAME_DURATION` 33.35 ms for the 16.67 ms requested. Adding `CONTROL_AE_TARGET_FPS_RANGE` [60,60] to the manual request changed nothing and was removed again. So `yuv_sizes[].max_fps` (60, from `getOutputMinFrameDuration`) is not reachable in a regular Camera2 session on this phone; whether a high-speed or vendor mode would reach it is not tried (see M2 Proposed changes).
+- Exposure: requested 3.000 ms, result 3.000 ms (manual sensor). Focus `locked`, AWB locked, `processing_on` = `[]`, sync clock `boottime`.
+- Stage p50/p95 ms (debug build, empty scene = a full scan every frame): pipeline (`avail_ns - cap_ns`) 46.6/48.8, detect_full 9.4/18.6, send 0.21/0.62, cap_to_sent 56.9/64.9. Meta misses: 0–2 per run (result arrived after the image; the latest exposure was used).
+- Bug found and fixed: the frame-gap check used the requested frame duration, so a 30 fps stream was counted as ~200 "skipped" frames per run; it now uses the duration the HAL reports (skipped: 1). The Gradle connected-test task uninstalls the app afterwards, which removes the CAMERA grant and the pairing; use `-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true`.
+
+**End-to-end smoke test (debug app started by the owner in WIRED, server in hardware mode, `adb reverse` for 8000 and 47802, pair code from `/api/pairing`), about 2 minutes:**
+- The phone paired as cam 1 (`wired_adb`, TCP) with no typing of an address; the app chose camera 1 (3.5 mm, max 30 fps) as its default.
+- `GET /api/cameras`: fps 30.0 / target 30.0 at 1280x720, link latency p50 1.08 ms, p95 1.48–1.82 ms, jitter 0.14–0.53 ms, loss 0 %, `send_dropped` 0, sync ok (rtt 0.95 ms, 56 samples, 0 rejected), clock `boottime`, exposure 3.0 ms, ISO 800, `processing_on` `[]`, thermal status 0 (headroom `null`: the device returned no reading), app CPU 9.8 %.
+- Stages p50/p95 ms: pipeline 36.6/38.0, detect_full 12.1/14.9, send 0.21/0.28, cap_to_sent 50.2/53.6; server pose age p50 49.2, p95 53.9, max 60.1 (n = 300). These are with no tags in view, so it is frame age, not a pose measurement.
+- **No tags were detected** (`tags` empty, calibration UNCALIBRATED). Cause not known yet: the phone's aim, lighting and tag visibility were not checked (no preview until step 11).
+- The cars (DUO_WARE_R1 / R2 over Bluetooth) were not touched: the car link is M3.
+- The dashboard is served by the Python server at `http://127.0.0.1:8000/` (this laptop only); there is no separate dashboard process.
