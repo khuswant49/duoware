@@ -116,7 +116,7 @@ class FramesTcpServer:
                     self.ingest.reject("rx_bad", conn.session, e.detail)
                     break
                 for body in messages:
-                    result = self.ingest.handle(body, peer_ip, conn.reply, "tcp", recv_ns)
+                    result = self.ingest.handle(body, peer_ip, conn.reply, "tcp", recv_ns, conn.session)
                     if result.session is not None and conn.session is None:
                         self._adopt(result.session, conn)
                     if result.rejected in CLOSING:

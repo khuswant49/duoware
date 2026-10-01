@@ -91,13 +91,16 @@ class FrameIngest:
             return None
         return self.sessions.by_sid(sid) if isinstance(sid, str) else None
 
-    def handle(self, data: bytes, peer_ip: str, reply: Reply, transport: str, recv_ns: int) -> Handled:
-        """One message body. `recv_ns` is the arrival time, stamped by the transport before anything else."""
+    def handle(self, data: bytes, peer_ip: str, reply: Reply, transport: str, recv_ns: int,
+               known: Session | None = None) -> Handled:
+        """One message body. `recv_ns` is the arrival time, stamped by the transport before anything else. `known` is
+        the session the transport already ties the bytes to (an adopted TCP connection), used to count an unparseable
+        message on its camera (PROTOCOL.md §2: per camera whenever the camera can be identified)."""
         try:
             msg = parse_datagram(data)
         except ProtocolError as e:
             cause = {"version": "rx_version"}.get(e.code, "rx_bad")
-            self.reject(cause, self.attribute(data), e.detail)
+            self.reject(cause, self.attribute(data) or known, e.detail)
             return Handled(None, cause)
         sess = self.sessions.by_sid(msg.sid)
         if sess is None or sess.peer_ip != peer_ip or sess.cam != msg.cam:
