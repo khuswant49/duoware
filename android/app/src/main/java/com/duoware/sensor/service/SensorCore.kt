@@ -8,6 +8,7 @@ import android.os.BatteryManager
 import android.os.SystemClock
 import android.util.Log
 import com.duoware.sensor.BuildConfig
+import com.duoware.sensor.bench.Benchmark
 import com.duoware.sensor.camera.CameraController
 import com.duoware.sensor.camera.Capabilities
 import com.duoware.sensor.camera.CaptureMeta
@@ -25,8 +26,12 @@ import com.duoware.sensor.perf.ThermalAdapter
 import com.duoware.sensor.perf.ThermalGovernor
 import com.duoware.sensor.pipeline.FramePipeline
 import com.duoware.sensor.pipeline.ImageMailbox
+import com.duoware.sensor.pipeline.NativeBridge
 import com.duoware.sensor.pipeline.PipelineRunner
 import com.duoware.sensor.pipeline.SendSlot
+import com.duoware.sensor.preview.PreviewEncoder
+import com.duoware.sensor.proto.Bench
+import com.duoware.sensor.proto.BenchResult
 import com.duoware.sensor.proto.CameraCaps
 import com.duoware.sensor.proto.CameraSettings
 import com.duoware.sensor.proto.CpuInfo
@@ -38,6 +43,7 @@ import com.duoware.sensor.proto.ThermalState
 import com.duoware.sensor.proto.Welcome
 import com.duoware.sensor.stats.StageStats
 import com.duoware.sensor.store.Prefs
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
@@ -54,13 +60,14 @@ class SensorCore(private val ctx: Context) : Session.Listener, CameraController.
     private val meta = CaptureMeta()
     private val mailbox = ImageMailbox<Image>()
     private val slot = SendSlot()
-    private val pipeline = FramePipeline({ clock.now() }, slot, meta)
+    internal val pipeline = FramePipeline({ clock.now() }, slot, meta)
     val perf = PerfManager(ctx)
     private val runner = PipelineRunner(mailbox, pipeline) { perf.reportWork(it) }
-    private val controller = CameraController(ctx, clock, meta, mailbox, this)
+    internal val controller = CameraController(ctx, clock, meta, mailbox, this)
     private val sender = FrameSender(slot, { clock.now() }, { s, r, c -> pipeline.onSent(s, r, c) })
-    private val cpu = CpuStats({ System.nanoTime() })
-    private val thermal = ThermalAdapter(ctx)
+    internal val cpu = CpuStats({ System.nanoTime() })
+    internal val thermal = ThermalAdapter(ctx)
+    private val previewEncoder = PreviewEncoder { session }
     private val wifiLock = WifiLatencyLock(ctx)
     private val executor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { Thread(it, "status") }
     private val discovery = Discovery(ctx, prefs, { step = it }, { onFound(it) }, { versionNote(it) })
@@ -74,6 +81,13 @@ class SensorCore(private val ctx: Context) : Session.Listener, CameraController.
     @Volatile var found: Found? = null; private set
     @Volatile var welcome: Welcome? = null; private set
     @Volatile var snapshot: Status? = null; private set
+    @Volatile var benchRunning = false; private set
+    @Volatile var benchStatus: String? = null; private set
+    @Volatile var benchResults: List<BenchResult> = emptyList(); private set
+    @Volatile internal var readyLatch: CountDownLatch? = null
+    private var benchmark: Benchmark? = null
+    private var modeBeforeBench = "tracking"
+    private var pendingBench: List<BenchResult>? = null     // finished runs not yet sent (the session was lost)
     @Volatile var appMode = "tracking"
     @Volatile var pairCode: String? = null
     val sendDropped: Long get() = slot.dropped
@@ -83,8 +97,8 @@ class SensorCore(private val ctx: Context) : Session.Listener, CameraController.
 
     // ------------------------------------------------------------------------------------------- session state
     private var session: Session? = null
-    private var caps: CameraCaps? = null
-    private var settings: CameraSettings? = null
+    internal var caps: CameraCaps? = null; private set
+    internal var settings: CameraSettings? = null; private set
     private var governor: ThermalGovernor? = null
     private var appliedLevel = -1
     private var holdForCode = false
@@ -103,6 +117,8 @@ class SensorCore(private val ctx: Context) : Session.Listener, CameraController.
         perf.foregroundService = true
         mailbox.reopen()
         runner.start()
+        pipeline.previewSource = previewEncoder
+        previewEncoder.start()
         thermal.listen(executor) { thermalTick() }
         lastFrames = pipeline.frames; lastTickMs = SystemClock.elapsedRealtime()
         ticker = executor.scheduleAtFixedRate({ safely { tick() } }, 1, 1, TimeUnit.SECONDS)
@@ -114,7 +130,10 @@ class SensorCore(private val ctx: Context) : Session.Listener, CameraController.
     fun stop() {
         if (!running) return
         running = false
+        benchmark?.cancelled = true
         ticker?.cancel(false); ticker = null
+        previewEncoder.stop()
+        pipeline.previewSource = null
         discovery.stop()
         endSession()
         runner.stop()
@@ -133,6 +152,7 @@ class SensorCore(private val ctx: Context) : Session.Listener, CameraController.
     }
 
     private fun endSession() {
+        benchmark?.cancelled = true
         session?.close(); session = null
         sender.stop()
         controller.stop()
@@ -155,6 +175,9 @@ class SensorCore(private val ctx: Context) : Session.Listener, CameraController.
     }
 
     fun refocus() = controller.refocus()
+
+    /** Now on the sync clock in ms: the time base of the stage statistics. */
+    internal fun nowSyncMs(): Long = clock.now() / 1_000_000
 
     // ------------------------------------------------------------------------------------------- discovery -> session
 
@@ -188,6 +211,7 @@ class SensorCore(private val ctx: Context) : Session.Listener, CameraController.
         pipeline.startSession(w.cam, w.sid)
         pipeline.configure(w.settings.tracking)
         settings = w.settings
+        applyPreview(w.settings)
         val tcp = f.linkMode == "wired_adb"
         sender.start(FrameSender.Target(f.host, if (tcp) w.framesTcpPort else w.framesPort, tcp, NetworkBinder(f.route), w.cam, w.sid))
         if (f.linkMode == "wireless") { wifiLock.acquire(); perf.wifiLowLatency = wifiLock.held } else perf.wifiLowLatency = false
@@ -196,6 +220,7 @@ class SensorCore(private val ctx: Context) : Session.Listener, CameraController.
         governor = ThermalGovernor(w.settings.thermal, baseFps, base)
         startCamera()
         linkState = "connected"; step = "Connected to ${f.beacon.name}"
+        sendPendingBench()
     }
 
     private fun startCamera() {
@@ -210,7 +235,8 @@ class SensorCore(private val ctx: Context) : Session.Listener, CameraController.
         val old = settings ?: return
         val c = caps ?: return
         settings = s
-        if (s.tracking != old.tracking) pipeline.configure(s.tracking)
+        applyPreview(s)
+        if (s.tracking != old.tracking && !benchRunning) pipeline.configure(s.tracking)
         if (s.resolution != old.resolution || s.fps != old.fps || s.thermal != old.thermal) {
             val base = Sizes.pick(c.yuvSizes, s.resolution) ?: s.resolution
             val g = ThermalGovernor(s.thermal, Sizes.effectiveFps(c.yuvSizes, base, s.fps) ?: DEFAULT_FPS, base)
@@ -245,6 +271,7 @@ class SensorCore(private val ctx: Context) : Session.Listener, CameraController.
 
     override fun onReady(active: CameraController.Active) {
         cameraErrors = 0
+        readyLatch?.countDown()
         pipeline.fallbackExposureNs = active.exposureNs
         perf.startHint(intArrayOf(runner.tid) + pipeline.workerTids(), active.frameDurationNs)
     }
@@ -264,12 +291,76 @@ class SensorCore(private val ctx: Context) : Session.Listener, CameraController.
         restart(delayMs = minOf(RETRY_MS shl (cameraErrors - 1), MAX_BACKOFF_MS))
     }
 
+    // ------------------------------------------------------------------------------------------- preview, benchmark
+
+    private fun applyPreview(s: CameraSettings) {
+        val fps = if (benchRunning) 0.0 else s.preview.fps          // no preview during a run
+        previewEncoder.configure(fps, s.preview.width, s.preview.quality)
+    }
+
+    /** Starts a benchmark (PROTOCOL.md section 4.7); returns why it cannot start, or null. */
+    @Synchronized
+    fun startBenchmark(warmS: Int = Benchmark.DEFAULT_WARM_S, measureS: Int = Benchmark.DEFAULT_MEASURE_S): String? {
+        val s = settings ?: return "not connected to a server"
+        val c = caps ?: return "no camera"
+        val a = controller.active ?: return "the camera is not streaming"
+        if (benchRunning) return "a benchmark is already running"
+        benchRunning = true
+        modeBeforeBench = appMode
+        appMode = "benchmark"
+        applyPreview(s)
+        benchResults = emptyList(); benchStatus = "starting"
+        val b = Benchmark(BenchSession(this) { done, label ->
+            benchResults = ArrayList(done); benchStatus = label?.let { "running: $it" }
+        }, warmS, measureS)
+        benchmark = b
+        Thread({
+            val results = try {
+                b.run(a.size, c.yuvSizes, NativeBridge.nativeFastestClusterCores(), cpu.cores)
+            } catch (e: Exception) {
+                Log.w(TAG, "benchmark failed", e); benchResults
+            }
+            finishBenchmark(results, b.cancelled)
+        }, "benchmark").start()
+        return null
+    }
+
+    fun cancelBenchmark() { benchmark?.cancelled = true }
+
+    /** Sends the finished runs as one `bench` message when a session is up; otherwise they wait for the next welcome. */
+    private fun sendPendingBench() {
+        val r = pendingBench ?: return
+        val w = welcome ?: return
+        val runId = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.ROOT).format(java.util.Date())
+        if (session?.send(Messages.bench(Bench(w.cam, runId, r))) == true) pendingBench = null
+    }
+
+    /** One `bench` message (also when cancelled: the finished runs), then the previous settings are restored. */
+    private fun finishBenchmark(results: List<BenchResult>, cancelled: Boolean) {
+        val s = settings
+        pipeline.javaBaseline = null
+        if (s != null) pipeline.configure(s.tracking)
+        pendingBench = if (results.isNotEmpty()) results else null
+        sendPendingBench()
+        appMode = modeBeforeBench
+        benchRunning = false
+        benchStatus = (if (cancelled) "cancelled" else "finished") + ": ${results.size} runs"
+        benchResults = results
+        if (s != null) applyPreview(s)
+        appliedLevel = -1
+        startCamera()
+    }
+
     // ------------------------------------------------------------------------------------------- 1 Hz
 
     private fun thermalTick() {
         val g = governor ?: return
         val f = settings?.thermal?.forecastS ?: DEFAULT_FORECAST_S
         val lv = g.tick(SystemClock.elapsedRealtime(), thermal.headroom(f), thermal.status())
+        if (benchRunning) {      // the ladder must not change the camera under a measurement, but a hot phone ends the run
+            if (thermal.status() >= (settings?.thermal?.statusDown ?: Int.MAX_VALUE)) benchmark?.cancelled = true
+            return
+        }
         if (lv.index == appliedLevel) return
         val s = settings ?: return
         val active = controller.active

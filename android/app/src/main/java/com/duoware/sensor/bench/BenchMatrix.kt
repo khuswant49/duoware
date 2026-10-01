@@ -57,4 +57,14 @@ object BenchMatrix {
         }
         return runs
     }
+
+    /**
+     * `aruco3` for phases B and C: the setting with the lower `detect_full` p50 among the `native_full` runs of phase A
+     * (off when either run has no number).
+     */
+    fun betterAruco3(results: List<com.duoware.sensor.proto.BenchResult>): Boolean {
+        val off = results.firstOrNull { it.pipeline == FULL && !it.aruco3 }?.detectFullMs?.p50 ?: return false
+        val on = results.firstOrNull { it.pipeline == FULL && it.aruco3 }?.detectFullMs?.p50 ?: return false
+        return on < off
+    }
 }

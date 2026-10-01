@@ -33,6 +33,12 @@ class FramePipeline(
     private var seq = 0L
     private var forceFull = false
 
+    /** The dashboard preview (PROTOCOL.md §4.6): asked for a downscaled copy only when one is due; null = off. */
+    @Volatile var previewSource: PreviewSource? = null
+
+    /** Benchmark only (`java_full`, DECISIONS.md D31): detect with the OpenCV Java API instead of the native pipeline. */
+    @Volatile var javaBaseline: JavaBaseline? = null
+
     /** Exposure used when no capture result matches an image (the configured one). */
     @Volatile var fallbackExposureNs = 0L
 
@@ -75,21 +81,40 @@ class FramePipeline(
      */
     @Synchronized
     fun processFrame(y: ByteBuffer, rowStride: Int, w: Int, h: Int, capNs: Long, availNs: Long): Int {
-        val n = NativeBridge.nativeProcess(handle, y, rowStride, w, h, capNs, forceFull, 0, result.buffer, null)
-        if (n < 0) return n
-        forceFull = false
+        val java = javaBaseline
+        val ps = if (java == null) previewSource else null
+        val pbuf = ps?.acquire(availNs)
+        val n: Int
+        val full: Boolean
+        val nSearched: Int
+        val detectNs: Long
+        if (java != null) {
+            val t0 = System.nanoTime()
+            n = java.detect(y, rowStride, w, h)
+            detectNs = System.nanoTime() - t0
+            full = true; nSearched = 0
+        } else {
+            n = NativeBridge.nativeProcess(handle, y, rowStride, w, h, capNs, forceFull, if (pbuf != null) ps!!.width else 0,
+                result.buffer, pbuf)
+            if (n < 0) { ps?.abort(); return n }
+            forceFull = false
+            full = result.isFull
+            nSearched = if (full) 0 else result.searchedInto(searched)
+            detectNs = result.detectNs
+            if (result.lost) lostRescans++
+            if (pbuf != null) {
+                if (result.previewW > 0) ps!!.publish(result.previewW, result.previewH, capNs) else ps!!.abort()
+            }
+        }
         val detEndNs = clock()
-        val full = result.isFull
-        val nSearched = if (full) 0 else result.searchedInto(searched)
-        if (result.lost) lostRescans++
         lastWasFull = full
-        lastDetectNs = result.detectNs
-        if (full) markersSeen = n else roiWindows = result.windows
+        lastDetectNs = detectNs
+        if (full) markersSeen = n else if (java == null) roiWindows = result.windows
 
         val i = slot.acquire()
         writer.begin(slot.buffer(i), cam, sid, seq++, capNs, meta.exposureNs(capNs, fallbackExposureNs),
             meta.skewNs(capNs), availNs, w, h, full, searched, nSearched)
-        for (k in 0 until minOf(n, ResultBuffer.MAX_MARKERS)) {
+        for (k in 0 until (if (java != null) 0 else minOf(n, ResultBuffer.MAX_MARKERS))) {      // java_full sends no corners
             result.corners(k, corners, 0)
             if (!writer.marker(result.markerId(k), corners, 0)) break
         }
@@ -98,7 +123,7 @@ class FramePipeline(
 
         val nowMs = detEndNs / NS_PER_MS
         stats.add(StageStats.Stage.PIPELINE, nowMs, (availNs - capNs) / NS_PER_MS_F)
-        stats.add(if (full) StageStats.Stage.DETECT_FULL else StageStats.Stage.DETECT_ROI, nowMs, result.detectNs / NS_PER_MS_F)
+        stats.add(if (full) StageStats.Stage.DETECT_FULL else StageStats.Stage.DETECT_ROI, nowMs, detectNs / NS_PER_MS_F)
         frames++
         return n
     }

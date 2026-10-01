@@ -27,6 +27,7 @@ import android.widget.TextView
 import com.duoware.sensor.service.SensorCore
 import com.duoware.sensor.service.SensorService
 import com.duoware.sensor.store.Prefs
+import com.duoware.sensor.ui.BenchmarkView
 import com.duoware.sensor.ui.DemoScreen
 import com.duoware.sensor.ui.StatsView
 
@@ -38,6 +39,7 @@ import com.duoware.sensor.ui.StatsView
 class MainActivity : Activity() {
     private val ui = Handler(Looper.getMainLooper())
     private lateinit var stats: StatsView
+    private lateinit var bench: BenchmarkView
     private lateinit var camera: Spinner
     private lateinit var pair: EditText
     private lateinit var manual: EditText
@@ -50,7 +52,7 @@ class MainActivity : Activity() {
     private val refresh = object : Runnable {
         override fun run() {
             core?.let { c ->
-                if (inDemo) demo?.refresh() else stats.update(c)
+                if (inDemo) demo?.refresh() else { stats.update(c); bench.update(c) }
             } ?: run { if (!inDemo) stats.text = "stopped" }
             ui.postDelayed(this, REFRESH_MS)
         }
@@ -63,6 +65,12 @@ class MainActivity : Activity() {
         if (sustainedSupported()) window.setSustainedPerformanceMode(true)
         setContentView(buildUi())
         requestPermissions()
+        debugAutomation(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        debugAutomation(intent)
     }
 
     override fun onResume() {
@@ -127,7 +135,7 @@ class MainActivity : Activity() {
         val row2 = LinearLayout(this)
         row2.addView(button("Demo screen") { enterDemo() })
         row2.addView(button("Battery") { batteryHelp() })
-        row2.addView(button("Benchmark (step 11)") {}.apply { isEnabled = false })
+        row2.addView(button("Benchmark") { toggleBenchmark(it as Button) })
         col.addView(row2)
 
         pair = EditText(this).apply { hint = "pair code (when asked)"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS; setSingleLine() }
@@ -139,6 +147,8 @@ class MainActivity : Activity() {
 
         stats = StatsView(this)
         col.addView(stats)
+        bench = BenchmarkView(this)
+        col.addView(bench)
         return ScrollView(this).apply { addView(col) }
     }
 
@@ -149,6 +159,34 @@ class MainActivity : Activity() {
     private fun start() {
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) { requestPermissions(); return }
         SensorService.start(this)
+    }
+
+    private fun toggleBenchmark(b: Button) {
+        val c = core ?: return
+        if (c.benchRunning) { c.cancelBenchmark(); return }
+        c.startBenchmark()?.let { AlertDialog.Builder(this).setMessage("Cannot start: $it").setPositiveButton("OK", null).show() }
+    }
+
+    /**
+     * Debug builds only (adb): `--ez autostart true` starts the sensor, `--ei bench_measure_s N [--ei bench_warm_s M]` runs a
+     * benchmark with shortened durations once the sensor streams. Release builds ignore these extras; the defaults in
+     * the code stay 5 s warm-up and 30 s measured.
+     */
+    private fun debugAutomation(i: Intent?) {
+        if (!BuildConfig.DEBUG || i == null) return
+        if (i.getBooleanExtra("autostart", false)) start()
+        val measure = i.getIntExtra("bench_measure_s", 0)
+        if (measure > 0) {
+            val warm = i.getIntExtra("bench_warm_s", 1)
+            ui.postDelayed(object : Runnable {
+                var tries = 0
+                override fun run() {
+                    val c = core
+                    val err = if (c == null) "no core" else c.startBenchmark(warm, measure)
+                    if (err != null && ++tries < DEBUG_BENCH_TRIES) ui.postDelayed(this, 1000)
+                }
+            }, 3000)
+        }
     }
 
     private fun toggleMode(b: Button) {
@@ -187,6 +225,7 @@ class MainActivity : Activity() {
 
     companion object {
         private const val REQ_PERMISSIONS = 1
+        private const val DEBUG_BENCH_TRIES = 40
         private const val REFRESH_MS = 500L              // stats at 2 Hz
     }
 }
