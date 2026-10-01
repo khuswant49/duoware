@@ -49,7 +49,7 @@ class RoiTrackerTest {
         var lostCount = 0
         var roiFrames = 0
         for (i in 0 until 300) {
-            val x = 100f + 5f * i                                       // 300 px/s at 60 fps
+            val x = 100f + pingPong(5 * i, 1000)                        // 300 px/s at 60 fps, back and forth in the image
             val ids = step(floatArrayOf(1f, x, 360f, 44f, 0f, 10f, 640f, 600f, 48f, 0f))
             assertTrue("frame $i: tag 1 found", 1 in ids)
             if (result.lost) lostCount++
@@ -112,6 +112,12 @@ class RoiTrackerTest {
             if (i >= 20 && !result.isFull && 7 in searched()) stillRoiWithTag++
         }
         assertEquals("demoted after demote_after_scans still scans", 0, stillRoiWithTag)
+    }
+
+    /** Triangle wave: 0 .. `span` .. 0 ... as `d` grows (the tag turns round before it leaves the image). */
+    private fun pingPong(d: Int, span: Int): Float {
+        val m = d % (2 * span)
+        return (if (m <= span) m else 2 * span - m).toFloat()
     }
 
     companion object {

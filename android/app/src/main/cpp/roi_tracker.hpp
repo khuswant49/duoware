@@ -66,6 +66,7 @@ private:
     TrackerConfig cfg_{};
     int64_t frameIndex_ = 0;
     bool lostLast_ = false;
+    bool due_ = false;                     // the frame planned last was a scheduled full scan (every full_scan_every)
     bool changed_ = true;
 };
 

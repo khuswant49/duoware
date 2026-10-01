@@ -17,7 +17,9 @@ namespace {
 
 cv::aruco::DetectorParameters params(int cornerRefine, bool aruco3) {
     cv::aruco::DetectorParameters p;
-    p.cornerRefinementMethod = cornerRefine == 1 ? cv::aruco::CORNER_REFINE_SUBPIX : cv::aruco::CORNER_REFINE_NONE;
+    p.cornerRefinementMethod = cornerRefine == 1 ? cv::aruco::CORNER_REFINE_SUBPIX
+                             : cornerRefine == 2 ? cv::aruco::CORNER_REFINE_CONTOUR
+                             : cornerRefine == 3 ? cv::aruco::CORNER_REFINE_APRILTAG : cv::aruco::CORNER_REFINE_NONE;
     p.useAruco3Detection = aruco3;
     return p;
 }

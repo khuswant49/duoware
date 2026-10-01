@@ -68,6 +68,7 @@ cv::Rect RoiTracker::window(const Tag& t, int64_t capNs, int w, int h, float& cx
 bool RoiTracker::plan(int64_t capNs, int w, int h, bool forceFull, std::vector<Window>& windows) {
     windows.clear();
     const bool due = frameIndex_ % cfg_.fullScanEvery == 0;
+    due_ = due;
     ++frameIndex_;
     if (forceFull || changed_ || lostLast_ || due || trackedCount() == 0) return true;
     for (int id = 0; id < DICT_SIZE && static_cast<int>(windows.size()) < MAX_WINDOWS; ++id) {
@@ -101,6 +102,10 @@ bool RoiTracker::update(int64_t capNs, bool full, const std::vector<Window>& win
                 continue;
             }
             const float cx = t.last.cx(), cy = t.last.cy();
+            if (!due_ && t.hasFullPos) {               // an extra full scan (rescan, new settings, nothing tracked yet):
+                if (inTrackIds(id)) { t.tracked = true; t.promoted = false; }   // "moved" is judged between SCHEDULED
+                continue;                                                       // scans, not between consecutive frames
+            }
             const bool moved = t.hasFullPos && std::hypot(cx - t.fullCx, cy - t.fullCy) > t.last.side();
             if (inTrackIds(id)) {
                 t.tracked = true;
