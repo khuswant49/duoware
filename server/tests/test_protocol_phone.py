@@ -187,7 +187,8 @@ def test_ws_message_errors():
 def test_settings_and_welcome_encode():
     raw = {"resolution": [1280, 720], "fps": 0, "exposure_ns": 3000000, "iso": 800, "focus": "locked",
            "awb": "locked", "tracking": {"track_ids": [1, 5], "full_scan_every": 10, "roi_margin": 1.5,
-                                         "roi_min_px": 64, "threads": 0},
+                                         "roi_min_px": 64, "threads": 0, "demote_after_scans": 3,
+                                         "corner_refine": "subpix", "aruco3": False},       # M2 keys (§4.4)
            "thermal": {"forecast_s": 10, "headroom_down": 0.85, "headroom_up": 0.65, "up_after_s": 60,
                        "status_down": 2, "fps_steps": [1.0, 0.75, 0.5], "resolution_steps": [[960, 540]]},
            "preview": {"fps": 3, "width": 480, "quality": 60}}
