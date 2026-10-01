@@ -48,6 +48,7 @@ class FrameIngest:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._tasks: dict[str, asyncio.Task] = {}
         self._last_logged: dict[tuple[str, str], int] = {}
+        self.recorder = None              # FrameRecorder when the server runs with --record-frames (D42)
         sessions.on_opened.append(self.attach)
         sessions.on_closed.append(self.detach)
 
@@ -109,7 +110,12 @@ class FrameIngest:
         if isinstance(msg, SyncReply):
             self._on_sync_reply(sess, msg, recv_ns)
             return Handled(sess, None)
-        return self._on_frame(sess, msg, reply, transport, recv_ns)
+        handled = self._on_frame(sess, msg, reply, transport, recv_ns)
+        if handled.frame_accepted and self.recorder is not None:
+            synced = sess.clock_sync.ok(recv_ns)
+            self.recorder.record(recv_ns, sess.cam, transport, synced,
+                                 sess.clock_sync.offset_ns(recv_ns) if synced else None, data)
+        return handled
 
     def _on_frame(self, sess: Session, f: Frame, reply: Reply, transport: str, recv_ns: int) -> Handled:
         if sess.last_seq is not None and f.seq <= sess.last_seq:

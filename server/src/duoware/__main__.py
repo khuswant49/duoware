@@ -20,18 +20,23 @@ def main() -> None:
     p.add_argument("--data-dir", type=Path, default=None, help="folder for state.db and events.db")
     p.add_argument("--host", default=None, help="bind address (default: server.toml; phones must reach it, D17)")
     p.add_argument("--port", type=int, default=None, help="HTTP port (default: server.toml)")
+    p.add_argument("--record-frames", action="store_true",
+                   help="write every accepted frame to data/recordings/<time>.jsonl (DECISIONS.md D42)")
     args = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     settings = load_settings(args.config_dir, args.data_dir)
     host = args.host or settings.server.http.host
     port = args.port or settings.server.http.port
-    app = create_app(settings, mode="sim" if args.sim else "hardware")
+    app = create_app(settings, mode="sim" if args.sim else "hardware", record_frames=args.record_frames)
     sv = app.state.get_services()
     sv.ports["http"] = port
     print(f"DUO-WARE 2 server ({'simulation' if args.sim else 'hardware'} mode)")
     print(f"  Pairing code for phones: {sv.sessions.pair_code}")
     print(f"  Dashboard:               http://127.0.0.1:{port}/")
-    print(f"  Phones connect to:       ws://<this computer>:{port}/ws/phone (UDP {settings.server.udp.frames_port})")
+    print(f"  Phones connect to:       ws://<this computer>:{port}/ws/phone (UDP {settings.server.udp.frames_port}, "
+          f"TCP {settings.server.tcp.frames_port})")
+    if args.record_frames:
+        print(f"  Recording frames to:     {settings.data_dir / 'recordings'}")
     uvicorn.run(app, host=host, port=port, ws_ping_interval=WS_PING_INTERVAL_S, ws_ping_timeout=WS_PING_TIMEOUT_S)
 
 

@@ -26,7 +26,9 @@ from duoware.registry.presets import VenuePresets
 from duoware.registry.service import TagRegistry
 from duoware.safety import SafetyState
 from duoware.settings import Settings
+from duoware.store.benchmarks import BenchStore
 from duoware.store.db import StateDb
+from duoware.store.recorder import FrameRecorder
 from duoware.store.events import EventLog
 
 log = logging.getLogger(__name__)
@@ -41,6 +43,7 @@ class Preview:
     h: int
     jpeg: bytes
     received_ns: int
+    seq: int                      # +1 per preview of this camera (PROTOCOL.md §6.2 preview_seq)
 
 
 @dataclass
@@ -64,6 +67,8 @@ class Services:
     beacon: BeaconSender | None
     monitor: LoopLagMonitor
     broadcaster: Broadcaster = field(init=False)
+    benchmarks: BenchStore = field(init=False)
+    recorder: FrameRecorder | None = None   # --record-frames only (DECISIONS.md D42)
     adb: AdbReverse | None = None          # hardware mode with wired.adb_reverse only (the simulator never runs adb)
     ports: dict[str, int] = field(default_factory=dict)       # http / frames / tcp / beacon, as actually bound
     phone_sockets: dict[str, WebSocket] = field(default_factory=dict)
@@ -73,7 +78,8 @@ class Services:
 
     @staticmethod
     def build(settings: Settings, clock: Clock | None = None, mode: str = "hardware",
-              interfaces_fn: Callable[[], list[tuple[str, str]]] | None = None) -> "Services":
+              interfaces_fn: Callable[[], list[tuple[str, str]]] | None = None,
+              record_frames: bool = False) -> "Services":
         clock = clock or SystemClock()
         db = StateDb(settings.data_dir / "state.db")
         events = EventLog(settings.data_dir / "events.db", clock)
@@ -96,6 +102,10 @@ class Services:
         sv = Services(settings, clock, mode, db, events, safety, registry, overrides, floor, sessions, world, layout,
                       presets, ingest, endpoint, tcp_server, beacon, monitor, ports=ports)
         sv.broadcaster = Broadcaster(sv)
+        sv.benchmarks = BenchStore(db, clock)
+        if record_frames:
+            sv.recorder = FrameRecorder(settings.data_dir / "recordings", settings, db.server_id, clock)
+            ingest.recorder = sv.recorder
         if mode == "hardware" and settings.server.wired.adb_reverse:
             sv.adb = AdbReverse(settings, lambda: (sv.ports["http"], sv.ports["tcp"]), events, clock)
         overrides.on_change(lambda _new: sv.push_settings())
@@ -133,6 +143,8 @@ class Services:
 
     async def start(self) -> None:
         loop = asyncio.get_running_loop()
+        if self.recorder is not None:
+            self.recorder.start()
         self._transport, _ = await loop.create_datagram_endpoint(
             lambda: self.endpoint, local_addr=("0.0.0.0", self.settings.server.udp.frames_port))
         self.ports["frames"] = self._transport.get_extra_info("sockname")[1]
@@ -174,6 +186,8 @@ class Services:
                 pass
         await self.tcp_server.stop()
         self.ingest.stop()
+        if self.recorder is not None:
+            self.recorder.stop()
         if self._transport is not None:
             self._transport.close()
             self._transport = None

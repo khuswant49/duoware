@@ -1,6 +1,6 @@
 """Camera endpoints (PROTOCOL.md §7.2): state + capabilities, settings overrides, recalibrate."""
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 
 from duoware.api.control import OPERATOR
 from duoware.api.deps import dashboard_guard, get_services
@@ -23,6 +23,28 @@ async def list_cameras(sv: Services = Depends(get_services)) -> list[dict]:
 async def put_camera_settings(request: Request, sv: Services = Depends(get_services)) -> dict:
     body = await json_body(request)
     return {"overrides": sv.overrides.update(body, OPERATOR)}
+
+
+@router.get("/api/cameras/{cam}/preview.jpg")
+async def preview(cam: int, sv: Services = Depends(get_services)) -> Response:
+    """PROTOCOL.md §7.2: the latest preview; `X-Capture-Age-Ms` only while the camera's clock is synced."""
+    p = sv.previews.get(cam)
+    if p is None:
+        raise DuoError("not_found", 404, f"Camera {cam} has sent no preview.", {"cam": cam})
+    headers = {"Cache-Control": "no-store", "X-Preview-Seq": str(p.seq)}
+    s = sv.sessions.by_cam(cam)
+    now = sv.clock.mono_ns()
+    if s is not None and s.clock_sync.ok(now):
+        cap = s.clock_sync.to_server_ns(p.cap_ns, now)
+        if cap is not None:
+            headers["X-Capture-Age-Ms"] = f"{(now - cap) / 1e6:.1f}"
+    return Response(p.jpeg, media_type="image/jpeg", headers=headers)
+
+
+@router.get("/api/cameras/{cam}/benchmarks")
+async def benchmarks(cam: int, sv: Services = Depends(get_services)) -> dict:
+    """PROTOCOL.md §7.2: stored `bench` runs of a camera, newest first."""
+    return {"runs": sv.benchmarks.runs(cam)}
 
 
 @router.post("/api/cameras/{cam}/recalibrate")

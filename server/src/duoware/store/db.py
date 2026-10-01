@@ -40,7 +40,14 @@ def _migrate_to_1(conn: sqlite3.Connection) -> None:
             conn.execute(statement)
 
 
-MIGRATIONS = [_migrate_to_1]
+def _migrate_to_2(conn: sqlite3.Connection) -> None:
+    """M2: benchmark runs from the phones (PROTOCOL.md §4.7)."""
+    conn.execute("CREATE TABLE benchmarks (id INTEGER PRIMARY KEY, cam INTEGER NOT NULL, run_id TEXT NOT NULL, "
+                 "received_wall_ms INTEGER NOT NULL, doc TEXT NOT NULL)")
+    conn.execute("CREATE INDEX benchmarks_cam ON benchmarks (cam, id)")
+
+
+MIGRATIONS = [_migrate_to_1, _migrate_to_2]
 
 
 class StateDb:

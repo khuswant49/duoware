@@ -82,12 +82,17 @@ async def _receive_loop(sv: Services, ws: WebSocket, sess: Session) -> None:
                 continue
             if isinstance(m, Status) and m.cam == sess.cam:
                 sv.sessions.on_status(sess, m)
-            elif isinstance(m, Bench):
-                pass                                   # accepted and ignored until M2 stores benchmark runs
+            elif isinstance(m, Bench) and m.cam == sess.cam:
+                doc = sv.benchmarks.add(m)
+                sv.events.log("camera", key="benchmark", value=m.run_id,
+                              facts={"cam": sess.cam, "run_id": m.run_id, "results": len(doc["results"])},
+                              reason="the phone finished a benchmark run")
         elif (data := msg.get("bytes")) is not None:
             try:
                 head, jpeg = parse_preview(data)
             except ProtocolError:
                 continue                               # PROTOCOL.md §4.6: bad or oversized previews are dropped
-            sv.previews[sess.cam] = Preview(head.cap_ns, head.w, head.h, jpeg, sv.clock.mono_ns())
+            prev = sv.previews.get(sess.cam)
+            sv.previews[sess.cam] = Preview(head.cap_ns, head.w, head.h, jpeg, sv.clock.mono_ns(),
+                                            prev.seq + 1 if prev else 1)
 

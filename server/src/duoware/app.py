@@ -20,13 +20,13 @@ DEFAULT_DASHBOARD_DIR = REPO_ROOT / "dashboard" / "dist"     # DECISIONS.md D16:
 
 def create_app(settings: Settings | None = None, mode: str = "hardware", clock: Clock | None = None,
                interfaces_fn: Callable[[], list[tuple[str, str]]] | None = None,
-               dashboard_dir: Path | None = None) -> FastAPI:
+               dashboard_dir: Path | None = None, record_frames: bool = False) -> FastAPI:
     """mode: "hardware" or "sim" (PROTOCOL.md §7.1 /api/health)."""
     holder: dict[str, Services] = {}
 
     def get_services() -> Services:
         if "sv" not in holder:
-            holder["sv"] = Services.build(settings or load_settings(), clock, mode, interfaces_fn)
+            holder["sv"] = Services.build(settings or load_settings(), clock, mode, interfaces_fn, record_frames)
         return holder["sv"]
 
     @asynccontextmanager

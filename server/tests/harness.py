@@ -29,13 +29,14 @@ def free_tcp_port() -> int:
 
 
 class ServerHarness:
-    def __init__(self, data_dir: Path, allow_remote: bool = False) -> None:
+    def __init__(self, data_dir: Path, allow_remote: bool = False, record_frames: bool = False) -> None:
         self.http_port = free_tcp_port()
         st = patched_settings(load_settings(data_dir=data_dir), http_port=self.http_port, frames_port=0, beacon_port=0,
                               beacon_interval_s=3600)
         st = dataclasses.replace(st, env={"DUO_PAIR_CODE": PAIR_CODE})
         self.settings = st
-        self.app = create_app(st, mode="sim", interfaces_fn=lambda: [], dashboard_dir=data_dir / "no-dist")
+        self.app = create_app(st, mode="sim", interfaces_fn=lambda: [], dashboard_dir=data_dir / "no-dist",
+                              record_frames=record_frames)
         self.sv = self.app.state.get_services()
         self.sv.ports["http"] = self.http_port
         self.server = uvicorn.Server(uvicorn.Config(self.app, host="127.0.0.1", port=self.http_port, log_level="warning",
