@@ -7,7 +7,6 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.test.rule.GrantPermissionRule
 import com.duoware.sensor.camera.CameraController
 import com.duoware.sensor.camera.Capabilities
 import com.duoware.sensor.camera.CaptureMeta
@@ -22,7 +21,7 @@ import com.duoware.sensor.stats.StageStats
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
-import org.junit.Rule
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.Locale
@@ -36,8 +35,6 @@ import java.util.concurrent.TimeUnit
  */
 @RunWith(AndroidJUnit4::class)
 class CameraControllerTest {
-    @get:Rule val permission: GrantPermissionRule = GrantPermissionRule.grant(Manifest.permission.CAMERA)
-
     private val ctx get() = InstrumentationRegistry.getInstrumentation().targetContext
 
     private fun report(key: String, value: String) {
@@ -65,6 +62,10 @@ class CameraControllerTest {
 
     @Test
     fun streamsFramesAtTheMaximumRateWithAManualExposure() {
+        // The realme refuses the runtime grant to the test runner (SecurityException from UiAutomation), so the CAMERA
+        // permission has to be granted once by hand (the app's own permission screen, step 10).
+        assumeTrue("CAMERA is not granted to com.duoware.sensor: grant it in the app's settings and rerun",
+            ctx.checkSelfPermission(Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED)
         val choice = Capabilities.defaultChoice(Capabilities.choices(ctx), null)!!
         val clock = ClockSource({ SystemClock.elapsedRealtimeNanos() }, { System.nanoTime() })
         val meta = CaptureMeta()

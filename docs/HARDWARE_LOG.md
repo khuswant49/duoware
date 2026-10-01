@@ -55,3 +55,12 @@ Meets acceptance: yes for phone checkpoint 1 (step 2: OpenCV loads on the phone,
 thread count reported). H1 as a whole is not covered yet: the synthetic-image corner error, the ROI tracker cases
 and the allocation check come in later steps.
 Notes: the 1.57 ms figure is a single synthetic call, not a detection benchmark.
+
+## 2026-10-01 — M2 steps 8–9: pipeline, capabilities, sender (realme RMX3392, Android 14, USB, instrumented tests)
+
+Setup: `connectedDebugAndroidTest` with a single class per run, debug build, phone on USB, screen on. Loopback only; no Wi-Fi or USB link was measured.
+
+- `FramePipelineTest` (synthetic 1280x720 frames, real sender thread to a local UDP socket): 2/2 pass. One full frame with 11 markers = 781 bytes of valid §2 JSON. Allocation by our pipeline over 1000 frames: 50,784 bytes (limit 65,536; `art.gc.bytes-allocated`). Stage p50/p95 ms: detect_full 6.45/10.28, detect_roi 0.53/2.42, send 0.13/0.79. (`cap_to_sent` in that test is meaningless: the synthetic capture times are not on the sender's clock.) Slot dropped 99 of 1201 frames because the test produces frames faster than real time.
+- `CameraControllerTest.capabilitiesOfEveryBackCameraAreReadable`: pass. Camera 0 (5.6 mm main): LEVEL_3, MANUAL_SENSOR, ts REALTIME, exposure 0.1 ms–32 s, ISO 100–6400, 1280x720 up to 60 fps, 1920x1080 up to 60 fps, no rolling-shutter skew, intrinsics and distortion `null`. Camera 1 (3.5 mm): FULL, ISO 100–1600, 1280x720 up to 30 fps.
+- `CameraControllerTest.streamsFramesAtTheMaximumRateWithAManualExposure`: **not run** (skipped). The realme refuses `pm grant` and the test runner's runtime grant of CAMERA (`SecurityException`, GRANT_RUNTIME_PERMISSIONS), so the permission has to be granted by hand once through the app's settings; the app has no permission screen until step 10.
+- `FrameSenderTest` (step 9, loopback): 2/2 pass. UDP: frame arrives with `sent_ns` stamped, `sync` answered on the same channel, loopback sync round trip 0.97 ms. TCP: length-framed frame, `sync_r` on the same connection, reconnect after the server closed it in 57 ms.
