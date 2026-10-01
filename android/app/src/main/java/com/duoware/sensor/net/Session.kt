@@ -103,6 +103,7 @@ class Session(private val prefs: Prefs, private val listener: Listener) {
 
     @Synchronized
     fun close() {
+        ended = true                                   // our own close is not a lost session
         socket?.close(NORMAL_CLOSE, "bye")
         socket?.cancel()
         socket = null
