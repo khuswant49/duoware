@@ -1,8 +1,0 @@
-[
-{
-  "directory": "C:/Users/khusw/Downloads/duoware/android/app/.cxx/RelWithDebInfo/5b642739/arm64-v8a",
-  "command": "C:\\Users\\khusw\\AppData\\Local\\Android\\Sdk\\ndk\\27.3.13750724\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\clang++.exe --target=aarch64-none-linux-android29 --sysroot=C:/Users/khusw/AppData/Local/Android/Sdk/ndk/27.3.13750724/toolchains/llvm/prebuilt/windows-x86_64/sysroot -Dduosensor_EXPORTS -isystem C:/Users/khusw/.gradle/caches/8.13/transforms/c7afcffa028c31b0e968dbec74f8630c/transformed/opencv-4.14.0/prefab/modules/opencv_java4/include -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -O2 -g -DNDEBUG -std=c++17 -fPIC -O2 -Wall -Wextra -o CMakeFiles\\duosensor.dir\\jni_bridge.cpp.o -c C:\\Users\\khusw\\Downloads\\duoware\\android\\app\\src\\main\\cpp\\jni_bridge.cpp",
-  "file": "C:\\Users\\khusw\\Downloads\\duoware\\android\\app\\src\\main\\cpp\\jni_bridge.cpp",
-  "output": "CMakeFiles\\duosensor.dir\\jni_bridge.cpp.o"
-}
-]

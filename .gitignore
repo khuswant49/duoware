@@ -21,6 +21,7 @@ dashboard/dist/
 android/.gradle/
 android/build/
 android/app/build/
+android/app/.cxx/
 android/local.properties
 android/.kotlin/
 android/.idea/
